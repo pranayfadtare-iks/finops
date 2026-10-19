@@ -1,0 +1,62 @@
+nohup: ignoring input
+
+Collecting usage statistics. To deactivate, set browser.gatherUsageStats to false.
+
+
+  You can now view your Streamlit app in your browser.
+
+  URL: http://0.0.0.0:8501
+
+2026-10-16 11:07:10.204 Session with id 690eac0b-f408-477c-9018-1ed547ecbbdd is already connected! Connecting to a new session.
+Task exception was never retrieved
+future: <Task finished name='Task-1102' coro=<WebSocketProtocol13.write_message.<locals>.wrapper() done, defined at /home/prajwal_more_ikshealth_com/finops/.venv-new/lib/python3.11/site-packages/tornado/websocket.py:1111> exception=WebSocketClosedError()>
+Traceback (most recent call last):
+  File "/home/prajwal_more_ikshealth_com/finops/.venv-new/lib/python3.11/site-packages/tornado/websocket.py", line 1113, in wrapper
+    await fut
+tornado.iostream.StreamClosedError: Stream is closed
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/home/prajwal_more_ikshealth_com/finops/.venv-new/lib/python3.11/site-packages/tornado/websocket.py", line 1115, in wrapper
+    raise WebSocketClosedError()
+tornado.websocket.WebSocketClosedError
+Task exception was never retrieved
+future: <Task finished name='Task-1103' coro=<WebSocketProtocol13.write_message.<locals>.wrapper() done, defined at /home/prajwal_more_ikshealth_com/finops/.venv-new/lib/python3.11/site-packages/tornado/websocket.py:1111> exception=WebSocketClosedError()>
+Traceback (most recent call last):
+  File "/home/prajwal_more_ikshealth_com/finops/.venv-new/lib/python3.11/site-packages/tornado/websocket.py", line 1113, in wrapper
+    await fut
+tornado.iostream.StreamClosedError: Stream is closed
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/home/prajwal_more_ikshealth_com/finops/.venv-new/lib/python3.11/site-packages/tornado/websocket.py", line 1115, in wrapper
+    raise WebSocketClosedError()
+tornado.websocket.WebSocketClosedError
+Task exception was never retrieved
+future: <Task finished name='Task-1467' coro=<WebSocketProtocol13.write_message.<locals>.wrapper() done, defined at /home/prajwal_more_ikshealth_com/finops/.venv-new/lib/python3.11/site-packages/tornado/websocket.py:1111> exception=WebSocketClosedError()>
+Traceback (most recent call last):
+  File "/home/prajwal_more_ikshealth_com/finops/.venv-new/lib/python3.11/site-packages/tornado/websocket.py", line 1113, in wrapper
+    await fut
+tornado.iostream.StreamClosedError: Stream is closed
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/home/prajwal_more_ikshealth_com/finops/.venv-new/lib/python3.11/site-packages/tornado/websocket.py", line 1115, in wrapper
+    raise WebSocketClosedError()
+tornado.websocket.WebSocketClosedError
+Task exception was never retrieved
+future: <Task finished name='Task-1468' coro=<WebSocketProtocol13.write_message.<locals>.wrapper() done, defined at /home/prajwal_more_ikshealth_com/finops/.venv-new/lib/python3.11/site-packages/tornado/websocket.py:1111> exception=WebSocketClosedError()>
+Traceback (most recent call last):
+  File "/home/prajwal_more_ikshealth_com/finops/.venv-new/lib/python3.11/site-packages/tornado/websocket.py", line 1113, in wrapper
+    await fut
+tornado.iostream.StreamClosedError: Stream is closed
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/home/prajwal_more_ikshealth_com/finops/.venv-new/lib/python3.11/site-packages/tornado/websocket.py", line 1115, in wrapper
+    raise WebSocketClosedError()
+tornado.websocket.WebSocketClosedError
