@@ -1,0 +1,5 @@
+# Credentials (service account keys)
+*.json
+
+# Virtual environment
+.venv/
