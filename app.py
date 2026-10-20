@@ -1,15 +1,26 @@
 """GCP FinOps dashboard: cached summary view and on-demand resource details."""
-from datetime import date, timedelta
+from concurrent.futures import ThreadPoolExecutor
+from datetime import date, datetime, time as dtime, timedelta, timezone
+import json
 import os
 import pandas as pd
 import plotly.express as px
+import plotly.graph_objects as go
+from plotly.subplots import make_subplots
 import streamlit as st
-from google.cloud import bigquery
+from google.auth.transport.requests import AuthorizedSession
+from google.cloud import bigquery, monitoring_v3
+from google.oauth2 import service_account
+
+from rightsizing import Params, STATUS_ORDER, build_recommendations
 
 st.set_page_config(page_title="GCP FinOps | Cost Intelligence", page_icon="💠", layout="wide")
 PROJECT_ID = os.getenv("GOOGLE_CLOUD_PROJECT", "iks-finops")
 TABLE_ID = os.getenv("GCP_BILLING_TABLE", "iks-finops.GCP_Finops_billing.gcp_billing_export_resource_v1_019EFB_4492BC_7B3DE6")
 CACHE_TTL = int(os.getenv("FINOPS_CACHE_TTL", "300"))
+# CPU/RAM (Cloud Monitoring) uses a separate service account key and a fixed list of projects.
+MONITORING_KEY_FILE = os.getenv("GCP_MONITORING_KEY_FILE", os.path.join(os.path.dirname(os.path.abspath(__file__)), "iksgcp.json"))
+MONITORING_PROJECTS = [p.strip() for p in os.getenv("GCP_MONITORING_PROJECTS", "iksgcp").split(",") if p.strip()]
 
 st.markdown("""
 <style>
@@ -42,8 +53,43 @@ def money(value, currency="INR"):
 
 
 @st.cache_resource
+def get_credentials():
+    """Return credentials for BigQuery and Cloud Monitoring.
+
+    Credential order:
+    1. GCP_SERVICE_ACCOUNT_JSON: the service account key JSON as an env var value.
+    2. None, which makes the Google clients fall back to Application Default
+       Credentials (e.g. a GOOGLE_APPLICATION_CREDENTIALS file path).
+    """
+    raw = os.getenv("GCP_SERVICE_ACCOUNT_JSON", "").strip()
+    if not raw:
+        return None
+    try:
+        info = json.loads(raw)
+        return service_account.Credentials.from_service_account_info(
+            info, scopes=["https://www.googleapis.com/auth/cloud-platform"])
+    except (ValueError, KeyError):
+        raise RuntimeError("GCP_SERVICE_ACCOUNT_JSON is set but is not a valid service account key JSON.") from None
+
+
+@st.cache_resource
 def get_client():
-    return bigquery.Client(project=PROJECT_ID)
+    return bigquery.Client(project=PROJECT_ID, credentials=get_credentials())
+
+
+@st.cache_resource
+def get_monitoring_credentials():
+    """Service account for Cloud Monitoring + Compute Engine reads (separate from the billing account)."""
+    if not os.path.isfile(MONITORING_KEY_FILE):
+        raise RuntimeError(f"Monitoring service account key not found: {MONITORING_KEY_FILE}. "
+                           "Set GCP_MONITORING_KEY_FILE or place iksgcp.json next to app.py.")
+    return service_account.Credentials.from_service_account_file(
+        MONITORING_KEY_FILE, scopes=["https://www.googleapis.com/auth/cloud-platform"])
+
+
+@st.cache_resource
+def get_monitoring_client():
+    return monitoring_v3.MetricServiceClient(credentials=get_monitoring_credentials())
 
 
 def run_query(sql, params, label):
@@ -155,6 +201,161 @@ def load_resource_data(start_day, end_day, services, projects, regions, skus, cu
     return run_query(sql, query_params(start_day,end_day,services,projects,regions,skus,currency,resource_search), "resources")
 
 
+CPU_METRIC = "compute.googleapis.com/instance/cpu/utilization"      # fraction 0-1, no agent needed
+MEM_METRIC = "agent.googleapis.com/memory/percent_used"              # percent 0-100, needs Ops Agent
+MAX_MONITORING_WORKERS = 8
+INSTANCE_ID_CHUNK = 40
+HOUR = 3600
+_ALIGN = monitoring_v3.Aggregation.Aligner
+# column -> (metric, aligner, extra filter, scale to percent)
+VM_METRICS = {
+    "cpu_pct": (CPU_METRIC, _ALIGN.ALIGN_MEAN, "", 100.0),
+    "cpu_max_pct": (CPU_METRIC, _ALIGN.ALIGN_MAX, "", 100.0),
+    "mem_pct": (MEM_METRIC, _ALIGN.ALIGN_MEAN, 'metric.labels.state="used"', 1.0),
+    "mem_max_pct": (MEM_METRIC, _ALIGN.ALIGN_MAX, 'metric.labels.state="used"', 1.0),
+}
+
+
+def _first_line(exc):
+    return (str(exc).splitlines() or [repr(exc)])[0][:200]
+
+
+@st.cache_data(ttl=CACHE_TTL, show_spinner=False)
+def load_vm_inventory(projects):
+    """Current Compute Engine instances (machine type, status, created) for each project."""
+    cols = ["project", "instance_id", "instance_name", "zone", "machine_type", "status", "created", "gpus"]
+    rows, errors = [], []
+    session = AuthorizedSession(get_monitoring_credentials())
+    for project in projects:
+        token = None
+        try:
+            while True:
+                params = {"maxResults": 500, "fields": "items/*/instances(id,name,machineType,status,creationTimestamp,guestAccelerators),nextPageToken"}
+                if token:
+                    params["pageToken"] = token
+                resp = session.get(f"https://compute.googleapis.com/compute/v1/projects/{project}/aggregated/instances", params=params, timeout=60)
+                resp.raise_for_status()
+                body = resp.json()
+                for zone_key, scoped in body.get("items", {}).items():
+                    for inst in scoped.get("instances", []):
+                        gpus = sum(int(a.get("acceleratorCount", 0)) for a in inst.get("guestAccelerators", []))
+                        rows.append((project, str(inst["id"]), inst["name"], zone_key.split("/")[-1],
+                                     inst["machineType"].split("/")[-1], inst["status"],
+                                     pd.to_datetime(inst.get("creationTimestamp"), utc=True, errors="coerce"), gpus))
+                token = body.get("nextPageToken")
+                if not token:
+                    break
+        except Exception as exc:
+            errors.append(f"{project} (inventory): {_first_line(exc)}")
+    return pd.DataFrame(rows, columns=cols), errors
+
+
+@st.cache_data(ttl=3600, show_spinner=False)
+def load_machine_type_catalog(project, zones):
+    """{zone: {machine_type: (vCPUs, RAM GB)}} so we know total CPU/RAM and the candidate sizes."""
+    def fetch(zone):
+        catalog, token = {}, None
+        session = AuthorizedSession(get_monitoring_credentials())
+        try:
+            while True:
+                params = {"maxResults": 500, "fields": "items(name,guestCpus,memoryMb),nextPageToken"}
+                if token:
+                    params["pageToken"] = token
+                resp = session.get(f"https://compute.googleapis.com/compute/v1/projects/{project}/zones/{zone}/machineTypes", params=params, timeout=60)
+                resp.raise_for_status()
+                body = resp.json()
+                for item in body.get("items", []):
+                    catalog[item["name"]] = (item["guestCpus"], item["memoryMb"] / 1024.0)
+                token = body.get("nextPageToken")
+                if not token:
+                    break
+            return zone, catalog, None
+        except Exception as exc:
+            return zone, catalog, f"{zone} (machine types): {_first_line(exc)}"
+    with ThreadPoolExecutor(max_workers=MAX_MONITORING_WORKERS) as pool:
+        results = list(pool.map(fetch, zones))
+    return {z: c for z, c, _ in results}, [e for _, _, e in results if e]
+
+
+def _metric_task(client, scope_project, instance_ids, column, start_dt, end_dt):
+    metric, aligner, extra, scale = VM_METRICS[column]
+    ids = ",".join(f'"{i}"' for i in instance_ids)
+    flt = f'metric.type="{metric}" AND resource.type="gce_instance" AND resource.labels.instance_id=one_of({ids})'
+    if extra:
+        flt += f" AND {extra}"
+    request = {
+        "name": f"projects/{scope_project}", "filter": flt,
+        "interval": monitoring_v3.TimeInterval(start_time=start_dt, end_time=end_dt),
+        "aggregation": monitoring_v3.Aggregation(alignment_period={"seconds": HOUR}, per_series_aligner=aligner),
+    }
+    rows = []
+    try:
+        for series in client.list_time_series(request=request):
+            project = series.resource.labels.get("project_id", scope_project)
+            instance_id = series.resource.labels.get("instance_id", "")
+            for point in series.points:
+                rows.append((project, instance_id, pd.Timestamp(point.interval.end_time), point.value.double_value * scale))
+    except Exception as exc:
+        return column, rows, f"{scope_project} ({column}): {_first_line(exc)}"
+    return column, rows, None
+
+
+@st.cache_data(ttl=CACHE_TTL, show_spinner=False)
+def load_vm_metrics(projects, start_day, end_day):
+    """Hourly mean and hourly peak CPU/RAM % for the RUNNING VMs only (one row per VM per hour)."""
+    inventory, errors = load_vm_inventory(projects)
+    running = inventory[inventory["status"] == "RUNNING"]
+    start_dt = datetime.combine(start_day, dtime.min, tzinfo=timezone.utc)
+    end_dt = min(datetime.combine(end_day + timedelta(days=1), dtime.min, tzinfo=timezone.utc), datetime.now(timezone.utc))
+    client = get_monitoring_client()
+    tasks = []
+    for project in projects:
+        ids = running.loc[running["project"] == project, "instance_id"].tolist()
+        for i in range(0, len(ids), INSTANCE_ID_CHUNK):
+            for column in VM_METRICS:
+                tasks.append((client, project, ids[i:i + INSTANCE_ID_CHUNK], column, start_dt, end_dt))
+    with ThreadPoolExecutor(max_workers=MAX_MONITORING_WORKERS) as pool:
+        results = list(pool.map(lambda t: _metric_task(*t), tasks))
+    keys = ["project", "instance_id", "time"]
+    frames = {column: [] for column in VM_METRICS}
+    for column, rows, error in results:
+        frames[column].extend(rows)
+        if error:
+            errors.append(error)
+    util = None
+    for column in VM_METRICS:
+        part = pd.DataFrame(frames[column], columns=keys + [column])
+        util = part if util is None else util.merge(part, on=keys, how="outer")
+    return util, errors
+
+
+@st.cache_data(ttl=CACHE_TTL, show_spinner=False)
+def load_vm_costs(projects, start_day, end_day, currency):
+    """Billed compute cost (cores, RAM, OS licences) per VM, joined by the instance ID in the billing export."""
+    sql = rf"""
+    SELECT REGEXP_EXTRACT(resource.global_name, r'/instances/(\d+)$') AS instance_id,
+      IFNULL(currency,'UNKNOWN') AS currency,
+      SUM(cost + IFNULL((SELECT SUM(c.amount) FROM UNNEST(credits) c),0)) AS net_cost
+    FROM `{TABLE_ID}`
+    WHERE usage_start_time >= TIMESTAMP(@start_day)
+      AND usage_start_time < TIMESTAMP(DATE_ADD(@end_day, INTERVAL 1 DAY))
+      AND service.description = 'Compute Engine'
+      AND project.id IN UNNEST(@projects)
+      AND REGEXP_CONTAINS(resource.global_name, r'/instances/\d+$')
+      AND REGEXP_CONTAINS(sku.description, r'Instance (Core|Ram)|Licensing Fee')
+      AND NOT REGEXP_CONTAINS(sku.description, r'(?i)commit')
+      AND (@currency='ALL' OR currency=@currency)
+    GROUP BY instance_id, currency
+    """
+    params = [bigquery.ScalarQueryParameter("start_day", "DATE", start_day),
+              bigquery.ScalarQueryParameter("end_day", "DATE", end_day),
+              bigquery.ArrayQueryParameter("projects", "STRING", list(projects)),
+              bigquery.ScalarQueryParameter("currency", "STRING", currency)]
+    df = run_query(sql, params, "vm_costs")
+    df["net_cost"] = pd.to_numeric(df["net_cost"], errors="coerce").fillna(0)
+    return df.sort_values("net_cost", ascending=False).drop_duplicates("instance_id")
+
+
 def style_chart(fig, height=360):
     fig.update_layout(height=height, margin=dict(l=10,r=10,t=48,b=10), paper_bgcolor="white",
                       plot_bgcolor="white", font=dict(family="Arial",color="#34435b"),
@@ -190,8 +391,14 @@ with st.sidebar:
         get_filter_options.clear()
         load_summary_data.clear()
         load_resource_data.clear()
+        load_vm_inventory.clear()
+        load_vm_metrics.clear()
+        load_vm_costs.clear()
+        load_machine_type_catalog.clear()
         st.session_state.pop("finops_resource_result",None)
         st.session_state.pop("finops_resource_signature",None)
+        st.session_state.pop("finops_vm_data",None)
+        st.session_state.pop("finops_vm_signature",None)
         st.rerun()
 
 try:
@@ -248,7 +455,7 @@ k3.metric("Credits / adjustments",money(credits_total,cur_label))
 k4.metric("Billing rows represented",f"{row_count:,}")
 k5.metric("Services",f"{services_count:,}")
 
-view = st.radio("Dashboard view",["📊 Overview","🧱 Resource explorer","🧭 Cost breakdowns","⬇️ Data & export"],horizontal=True,label_visibility="collapsed")
+view = st.radio("Dashboard view",["📊 Overview","🧱 Resource explorer","🧭 Cost breakdowns","📈 CPU & RAM","⬇️ Data & export"],horizontal=True,label_visibility="collapsed")
 
 if view=="📊 Overview":
     left,right = st.columns([1.65,1])
@@ -339,6 +546,217 @@ elif view=="🧭 Cost breakdowns":
         pivot = heat.pivot(index="service",columns="project",values="net_cost").fillna(0)
         fig = px.imshow(pivot,aspect="auto",color_continuous_scale="Blues",labels=dict(x="Project",y="Service",color="Net cost"),title="Top services and projects")
         st.plotly_chart(style_chart(fig,480),use_container_width=True)
+
+elif view=="📈 CPU & RAM":
+    STATUS_COLORS = {"Idle":"#7f8fa9","Over-provisioned":"#e09a37","Right-sized":"#168c86","Under-provisioned":"#d64545",
+                     "Insufficient data":"#b7bfce","Not evaluated":"#d5dbe6"}
+    st.markdown("<div class='section-head'>VM utilization & right-sizing</div>",unsafe_allow_html=True)
+    st.caption(f"Running Compute Engine VMs in **{', '.join(MONITORING_PROJECTS)}** · CPU/RAM from Cloud Monitoring, machine sizes from Compute Engine, "
+               f"cost from the billing export · authenticated with `{os.path.basename(MONITORING_KEY_FILE)}`. Uses the sidebar date range (metrics are kept ~6 weeks).")
+    with st.expander("Right-sizing assumptions (change anytime, no reload needed)",expanded=False):
+        a1,a2,a3 = st.columns(3)
+        target_cpu = a1.slider("Target CPU at peak (%)",30,85,60,help="After resizing, the p95 hourly peak CPU should land near this value.")
+        target_mem = a2.slider("Target RAM at peak (%)",40,90,70,help="After resizing, the p95 hourly peak RAM should land near this value.")
+        min_saving = a3.slider("Minimum saving to recommend (%)",0,50,10)
+        st.caption("Demand = p95 of hourly peak utilization over the date range. Needed size = current size × p95 ÷ target. "
+                   "The cheapest same-series machine type (or a resized custom type for custom VMs) that fits both CPU and RAM is recommended. "
+                   "VMs without RAM data (no Ops Agent) keep their RAM and only shrink vCPUs. Saving = the VM's billed compute cost × estimated price reduction "
+                   "(vCPU ≈ 7.5× the price of 1 GB RAM). Treat savings as estimates; committed-use discounts may reduce what you actually save.")
+    projects_t = tuple(MONITORING_PROJECTS)
+    vm_signature = (str(start_day),str(end_day),projects_t,currency)
+    if st.button("Load VM utilization & right-sizing",type="primary"):
+        try:
+            with st.spinner("Loading VM inventory, utilization and billing cost…"):
+                inventory,inv_errors = load_vm_inventory(projects_t)
+                util,util_errors = load_vm_metrics(projects_t,start_day,end_day)
+                zones = tuple(sorted(inventory.loc[inventory["status"]=="RUNNING","zone"].unique()))
+                catalogs,cat_errors = load_machine_type_catalog(projects_t[0],zones) if zones else ({},[])
+                cost_errors = []
+                try:
+                    vm_costs = load_vm_costs(projects_t,start_day,end_day,currency)
+                except Exception as exc:
+                    vm_costs = pd.DataFrame(columns=["instance_id","currency","net_cost"])
+                    cost_errors.append(f"billing cost lookup failed: {str(exc).splitlines()[0][:200]}")
+            st.session_state["finops_vm_data"] = dict(inventory=inventory,util=util,catalogs=catalogs,costs=vm_costs,
+                                                      errors=list(dict.fromkeys(inv_errors+util_errors+cat_errors+cost_errors)))
+            st.session_state["finops_vm_signature"] = vm_signature
+        except Exception as exc:
+            st.error("Unable to load VM data.")
+            st.code(str(exc))
+    if st.session_state.get("finops_vm_signature")!=vm_signature:
+        st.info("Click **Load VM utilization & right-sizing**. It reads the VM list, hourly CPU/RAM metrics and billed cost for the selected dates.")
+    else:
+        vm_data = st.session_state["finops_vm_data"]
+        if vm_data["errors"]:
+            with st.expander(f"⚠️ {len(vm_data['errors'])} request(s) failed",expanded=False):
+                st.caption("Typically a missing Compute Viewer / Monitoring Viewer role, or an API that is disabled in the project.")
+                for message in vm_data["errors"]:
+                    st.code(message)
+        window_start = datetime.combine(start_day,dtime.min,tzinfo=timezone.utc)
+        window_end = min(datetime.combine(end_day+timedelta(days=1),dtime.min,tzinfo=timezone.utc),datetime.now(timezone.utc))
+        recs = build_recommendations(vm_data["inventory"],vm_data["util"],vm_data["costs"],vm_data["catalogs"],window_start,window_end,
+                                     Params(target_cpu=target_cpu,target_mem=target_mem,min_saving_pct=min_saving))
+        if recs.empty:
+            st.warning("No running VMs were found for the configured project(s).")
+        else:
+            vm_cur = vm_data["costs"]["currency"].iloc[0] if not vm_data["costs"].empty else cur_label
+            evaluated = recs[recs["status"].isin(["Idle","Over-provisioned","Right-sized","Under-provisioned"])]
+            down = recs[recs["status"].isin(["Idle","Over-provisioned"])]
+            up = recs[recs["status"]=="Under-provisioned"]
+            savings = float(down["monthly_saving"].sum(skipna=True))
+            extra_cost = float(-up["monthly_saving"].sum(skipna=True))
+            base_cost = float(evaluated["monthly_cost"].sum(skipna=True))
+            terminated = int((vm_data["inventory"]["status"]!="RUNNING").sum())
+
+            k1,k2,k3,k4,k5,k6 = st.columns(6)
+            k1.metric("Running VMs",f"{len(recs):,}",help=f"{terminated} stopped/terminated VMs are excluded.")
+            k2.metric("Downsize candidates",f"{len(down):,}")
+            k3.metric("Under-provisioned",f"{len(up):,}")
+            k4.metric("Est. monthly savings",money(savings,vm_cur),delta=(f"{savings/base_cost:.0%} of VM compute cost" if base_cost>0 else None),delta_color="off")
+            k5.metric("Extra cost to fix under-provisioned",money(extra_cost,vm_cur))
+            k6.metric("vCPUs now → recommended",f"{int(evaluated['vcpus'].sum()):,} → {int(evaluated['rec_vcpus'].sum()):,}")
+
+            tab_rec,tab_fleet,tab_vm = st.tabs(["🎯 Recommendations","📊 Fleet utilization","🔍 VM drill-down"])
+
+            with tab_rec:
+                r1,r2 = st.columns([1.5,1])
+                with r1:
+                    scatter = recs[recs["cpu_p95"].notna() & recs["mem_p95"].notna()].copy()
+                    if scatter.empty:
+                        st.info("No VM reports RAM (Ops Agent not installed), so the CPU-vs-RAM map cannot be drawn.")
+                    else:
+                        fallback = scatter["monthly_cost"].median()
+                        scatter["bubble"] = scatter["monthly_cost"].fillna(fallback if pd.notna(fallback) else 1).clip(lower=1)
+                        fig = px.scatter(scatter,x="cpu_p95",y="mem_p95",size="bubble",color="status",color_discrete_map=STATUS_COLORS,size_max=38,
+                                         hover_name="instance_name",hover_data={"machine_type":True,"recommended_type":True,"cpu_p95":":.0f","mem_p95":":.0f","bubble":False},
+                                         labels={"cpu_p95":"CPU p95 of hourly peaks (%)","mem_p95":"RAM p95 of hourly peaks (%)"},
+                                         title="CPU vs RAM demand (bubble size = monthly cost)")
+                        fig.add_vline(x=target_cpu,line_dash="dash",line_color="#9aa6bb")
+                        fig.add_hline(y=target_mem,line_dash="dash",line_color="#9aa6bb")
+                        fig.update_xaxes(range=[0,105]); fig.update_yaxes(range=[0,105])
+                        st.plotly_chart(style_chart(fig,430),use_container_width=True)
+                        st.caption(f"Bottom-left of the dashed lines = oversized in both CPU and RAM. Only {len(scatter)} of {len(recs)} VMs report RAM.")
+                with r2:
+                    by_status = recs.groupby("status").agg(vms=("instance_id","count"),cost=("monthly_cost","sum")).reindex(STATUS_ORDER).dropna(subset=["vms"]).reset_index()
+                    fig = px.bar(by_status,x="status",y="vms",color="status",color_discrete_map=STATUS_COLORS,text="vms",title="VMs by right-sizing status",
+                                 hover_data={"cost":":,.0f"})
+                    fig.update_layout(showlegend=False,xaxis_title="",yaxis_title="VMs")
+                    st.plotly_chart(style_chart(fig,430),use_container_width=True)
+
+                s1,s2 = st.columns(2)
+                with s1:
+                    top = down.dropna(subset=["monthly_saving"]).nlargest(15,"monthly_saving").sort_values("monthly_saving")
+                    if top.empty:
+                        st.info("No downsize savings to show (no candidates, or no billing cost matched these VMs).")
+                    else:
+                        top = top.assign(move=top["machine_type"]+" → "+top["recommended_type"].astype(str),label=top["monthly_saving"].map(lambda v: money(v,vm_cur)))
+                        fig = px.bar(top,x="monthly_saving",y="instance_name",orientation="h",color="status",color_discrete_map=STATUS_COLORS,text="label",
+                                     hover_data={"move":True,"monthly_cost":":,.0f","monthly_saving":":,.0f","label":False},title="Top 15 monthly savings by VM")
+                        fig.update_layout(yaxis_title="",xaxis_title=f"Estimated monthly saving ({vm_cur})")
+                        st.plotly_chart(style_chart(fig,470),use_container_width=True)
+                with s2:
+                    cap = evaluated.groupby("series",as_index=False).agg(vcpu_now=("vcpus","sum"),vcpu_rec=("rec_vcpus","sum"),ram_now=("mem_gb","sum"),ram_rec=("rec_mem_gb","sum"))
+                    fig = make_subplots(rows=1,cols=2,subplot_titles=("vCPUs: current vs recommended","RAM (GB): current vs recommended"))
+                    fig.add_bar(x=cap["series"],y=cap["vcpu_now"],name="Current",marker_color="#3678d4",legendgroup="now",row=1,col=1)
+                    fig.add_bar(x=cap["series"],y=cap["vcpu_rec"],name="Recommended",marker_color="#11a7a1",legendgroup="rec",row=1,col=1)
+                    fig.add_bar(x=cap["series"],y=cap["ram_now"],name="Current",marker_color="#3678d4",legendgroup="now",showlegend=False,row=1,col=2)
+                    fig.add_bar(x=cap["series"],y=cap["ram_rec"],name="Recommended",marker_color="#11a7a1",legendgroup="rec",showlegend=False,row=1,col=2)
+                    fig.update_layout(barmode="group")
+                    st.plotly_chart(style_chart(fig,470),use_container_width=True)
+
+                st.markdown("<div class='section-head'>Right-sizing recommendations</div>",unsafe_allow_html=True)
+                chosen = st.multiselect("Status",STATUS_ORDER,default=[s for s in STATUS_ORDER if s in set(recs["status"])],key="finops_vm_status_filter")
+                table = recs[recs["status"].isin(chosen)].sort_values("monthly_saving",ascending=False,na_position="last")
+                table = table[["instance_name","zone","status","machine_type","vcpus","mem_gb","cpu_avg","cpu_p95","mem_avg","mem_p95",
+                               "recommended_type","rec_vcpus","rec_mem_gb","monthly_cost","monthly_saving","confidence","reason","instance_id"]]
+                st.dataframe(table,use_container_width=True,hide_index=True,column_config={
+                    "instance_name":"VM","machine_type":"Current type","vcpus":st.column_config.NumberColumn("vCPUs",format="%d"),
+                    "mem_gb":st.column_config.NumberColumn("RAM (GB)",format="%.1f"),
+                    "cpu_avg":st.column_config.NumberColumn("CPU avg %",format="%.1f"),"cpu_p95":st.column_config.NumberColumn("CPU p95 %",format="%.1f"),
+                    "mem_avg":st.column_config.NumberColumn("RAM avg %",format="%.1f"),"mem_p95":st.column_config.NumberColumn("RAM p95 %",format="%.1f"),
+                    "recommended_type":"Recommended type","rec_vcpus":st.column_config.NumberColumn("Rec. vCPUs",format="%d"),
+                    "rec_mem_gb":st.column_config.NumberColumn("Rec. RAM (GB)",format="%.1f"),
+                    "monthly_cost":st.column_config.NumberColumn(f"Monthly cost ({vm_cur})",format="%.0f"),
+                    "monthly_saving":st.column_config.NumberColumn(f"Est. monthly saving ({vm_cur})",format="%.0f"),
+                    "confidence":"Confidence","reason":"Why","instance_id":"Instance ID"})
+                st.caption("Negative savings on Under-provisioned VMs are the extra monthly cost of resizing them up. Verify with the application owner before changing a VM.")
+                st.download_button("⬇️ Download right-sizing recommendations (CSV)",data=table.to_csv(index=False).encode("utf-8-sig"),file_name=f"gcp_finops_rightsizing_{start_day}_{end_day}.csv",mime="text/csv")
+
+            with tab_fleet:
+                util_fleet = vm_data["util"]
+                util_fleet = util_fleet[util_fleet["instance_id"].isin(recs["instance_id"])]
+                f1,f2 = st.columns([1.6,1])
+                with f1:
+                    trend = util_fleet.groupby("time",as_index=False)[["cpu_pct","mem_pct"]].mean().sort_values("time")
+                    trend = trend.melt(id_vars="time",value_vars=["cpu_pct","mem_pct"],var_name="Metric",value_name="Utilization %").dropna()
+                    trend["Metric"] = trend["Metric"].map({"cpu_pct":"CPU","mem_pct":"RAM (VMs with agent)"})
+                    fig = px.line(trend,x="time",y="Utilization %",color="Metric",title="Average utilization across running VMs (hourly)",color_discrete_sequence=["#3678d4","#e09a37"])
+                    fig.update_yaxes(range=[0,100])
+                    st.plotly_chart(style_chart(fig,380),use_container_width=True)
+                with f2:
+                    fig = px.histogram(recs.dropna(subset=["cpu_p95"]),x="cpu_p95",color="status",color_discrete_map=STATUS_COLORS,nbins=20,
+                                       title="How busy are the VMs? (CPU p95)",labels={"cpu_p95":"CPU p95 of hourly peaks (%)"})
+                    fig.update_layout(yaxis_title="VMs")
+                    st.plotly_chart(style_chart(fig,380),use_container_width=True)
+                g1,g2 = st.columns(2)
+                with g1:
+                    top_cpu = recs.dropna(subset=["cpu_p95"]).nlargest(15,"cpu_p95").sort_values("cpu_p95")
+                    fig = px.bar(top_cpu,x="cpu_p95",y="instance_name",orientation="h",color="status",color_discrete_map=STATUS_COLORS,
+                                 title="Top 15 VMs by CPU (p95 of hourly peaks)",hover_data={"machine_type":True,"cpu_avg":":.1f"})
+                    fig.update_layout(yaxis_title="",xaxis_title="CPU p95 %")
+                    st.plotly_chart(style_chart(fig,440),use_container_width=True)
+                with g2:
+                    top_ram = recs.dropna(subset=["mem_p95"]).nlargest(15,"mem_p95").sort_values("mem_p95")
+                    if top_ram.empty:
+                        st.info("No VM reports RAM. Install the Ops Agent to see RAM utilization.")
+                    else:
+                        fig = px.bar(top_ram,x="mem_p95",y="instance_name",orientation="h",color="status",color_discrete_map=STATUS_COLORS,
+                                     title="Top 15 VMs by RAM (p95 of hourly peaks)",hover_data={"machine_type":True,"mem_avg":":.1f"})
+                        fig.update_layout(yaxis_title="",xaxis_title="RAM p95 %")
+                        st.plotly_chart(style_chart(fig,440),use_container_width=True)
+                by_series = recs.groupby("series",as_index=False).agg(CPU=("cpu_avg","mean"),RAM=("mem_avg","mean"),VMs=("instance_id","count"))
+                by_series = by_series.melt(id_vars=["series","VMs"],value_vars=["CPU","RAM"],var_name="Metric",value_name="Avg utilization %").dropna()
+                fig = px.bar(by_series,x="series",y="Avg utilization %",color="Metric",barmode="group",hover_data={"VMs":True},
+                             title="Average utilization by machine series",color_discrete_sequence=["#3678d4","#e09a37"])
+                fig.update_layout(xaxis_title="Machine series")
+                st.plotly_chart(style_chart(fig,360),use_container_width=True)
+
+            with tab_vm:
+                ordered = recs.sort_values(["monthly_saving","instance_name"],ascending=[False,True],na_position="last")
+                labels = {row["instance_id"]:f"{row['instance_name']} · {row['machine_type']} · {row['status']}" for _,row in ordered.iterrows()}
+                picked = st.selectbox("Choose a VM",list(labels.keys()),format_func=lambda i: labels[i])
+                vm = recs[recs["instance_id"]==picked].iloc[0]
+                m1,m2,m3,m4,m5 = st.columns(5)
+                m1.metric("Current type",vm["machine_type"])
+                m2.metric("Provisioned",f"{vm['vcpus']:.0f} vCPU · {vm['mem_gb']:.1f} GB" if pd.notna(vm["vcpus"]) else "n/a")
+                m3.metric("Status",vm["status"])
+                m4.metric("Recommended",str(vm["recommended_type"]) if vm["recommended_type"] else "n/a")
+                m5.metric("Est. monthly saving",money(vm["monthly_saving"],vm_cur) if pd.notna(vm["monthly_saving"]) else "n/a")
+                st.caption(f"{vm['reason']} · confidence: {vm['confidence'] or 'n/a'} · hourly data points: {int(vm['points'])}")
+                vm_util = vm_data["util"]
+                vm_util = vm_util[vm_util["instance_id"]==picked].sort_values("time")
+                d1,d2 = st.columns(2)
+                for holder,mean_col,max_col,title,p95,target in ((d1,"cpu_pct","cpu_max_pct","CPU %",vm["cpu_p95"],target_cpu),(d2,"mem_pct","mem_max_pct","RAM %",vm["mem_p95"],target_mem)):
+                    with holder:
+                        if vm_util[mean_col].notna().any():
+                            fig = go.Figure()
+                            fig.add_trace(go.Scatter(x=vm_util["time"],y=vm_util[max_col],name="Hourly peak",line=dict(color="#d64545",width=1)))
+                            fig.add_trace(go.Scatter(x=vm_util["time"],y=vm_util[mean_col],name="Hourly average",line=dict(color="#3678d4",width=2)))
+                            fig.add_hline(y=target,line_dash="dash",line_color="#9aa6bb",annotation_text=f"target {target:.0f}%")
+                            if pd.notna(p95):
+                                fig.add_hline(y=p95,line_dash="dot",line_color="#e09a37",annotation_text=f"p95 {p95:.0f}%",annotation_position="bottom right")
+                            fig.update_layout(title=f"{title} over time",yaxis_range=[0,105])
+                            st.plotly_chart(style_chart(fig,360),use_container_width=True)
+                        else:
+                            st.info(f"No {title.split()[0]} data for this VM." + (" Install the Ops Agent to report RAM." if title.startswith("RAM") else ""))
+                if pd.notna(vm["vcpus"]):
+                    cap_fig = make_subplots(rows=1,cols=2,subplot_titles=("vCPUs","RAM (GB)"))
+                    used_cpu = vm["vcpus"]*vm["cpu_p95"]/100 if pd.notna(vm["cpu_p95"]) else None
+                    used_mem = vm["mem_gb"]*vm["mem_p95"]/100 if pd.notna(vm["mem_p95"]) else None
+                    cap_fig.add_bar(x=["Provisioned","Used at p95 peak","Recommended"],y=[vm["vcpus"],used_cpu,vm["rec_vcpus"]],marker_color=["#3678d4","#e09a37","#11a7a1"],showlegend=False,row=1,col=1)
+                    cap_fig.add_bar(x=["Provisioned","Used at p95 peak","Recommended"],y=[vm["mem_gb"],used_mem,vm["rec_mem_gb"]],marker_color=["#3678d4","#e09a37","#11a7a1"],showlegend=False,row=1,col=2)
+                    cap_fig.update_layout(title="Capacity: provisioned vs used vs recommended")
+                    st.plotly_chart(style_chart(cap_fig,340),use_container_width=True)
 
 else:
     st.markdown("<div class='section-head'>Aggregated billing data</div>",unsafe_allow_html=True)
