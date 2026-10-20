@@ -3,4 +3,5 @@ numpy==1.26.4
 pandas==2.2.3
 plotly==5.24.1
 google-cloud-bigquery
+google-cloud-monitoring
 db-dtypes

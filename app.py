@@ -1,14 +1,19 @@
-"""GCP FinOps dashboard: cached summary view and on-demand resource details."""
-from datetime import date, timedelta
+"""GCP FinOps dashboard: cost, owner mapping, and utilization signals."""
+from datetime import date, datetime, timedelta, timezone
 import os
+import re
+
 import pandas as pd
 import plotly.express as px
 import streamlit as st
 from google.cloud import bigquery
+from google.cloud import monitoring_v3
+from google.cloud.monitoring_v3.types import Aggregation, ListTimeSeriesRequest, TimeInterval
 
 st.set_page_config(page_title="GCP FinOps | Cost Intelligence", page_icon="💠", layout="wide")
 PROJECT_ID = os.getenv("GOOGLE_CLOUD_PROJECT", "iks-finops")
 TABLE_ID = os.getenv("GCP_BILLING_TABLE", "iks-finops.GCP_Finops_billing.gcp_billing_export_resource_v1_019EFB_4492BC_7B3DE6")
+MONITORING_PROJECT = os.getenv("MONITORING_PROJECT_ID", "iksgcp")
 CACHE_TTL = int(os.getenv("FINOPS_CACHE_TTL", "300"))
 
 st.markdown("""
@@ -44,6 +49,11 @@ def money(value, currency="INR"):
 @st.cache_resource
 def get_client():
     return bigquery.Client(project=PROJECT_ID)
+
+
+@st.cache_resource
+def get_monitoring_client():
+    return monitoring_v3.MetricServiceClient()
 
 
 def run_query(sql, params, label):
@@ -115,6 +125,7 @@ def load_summary_data(start_day, end_day, services, projects, regions, skus, cur
       COALESCE(project.name,project.id,'Unspecified project') AS project,
       COALESCE(location.region,'Unspecified region') AS region,
       COALESCE(sku.description,'Unspecified SKU') AS sku,
+      COALESCE(MAX((SELECT lbl.value FROM UNNEST(labels) lbl WHERE LOWER(lbl.key) IN ('owner','owned_by','team_owner','resource_owner') LIMIT 1)), 'Unassigned') AS owner,
       SUM(cost) AS gross_cost,
       SUM(IFNULL((SELECT SUM(c.amount) FROM UNNEST(credits) c),0)) AS credits,
       SUM(cost+IFNULL((SELECT SUM(c.amount) FROM UNNEST(credits) c),0)) AS net_cost,
@@ -135,9 +146,12 @@ def load_resource_data(start_day, end_day, services, projects, regions, skus, cu
     SELECT IFNULL(currency,'UNKNOWN') AS currency,
       COALESCE(service.description,'Unspecified service') AS service,
       COALESCE(project.name,project.id,'Unspecified project') AS project,
+      COALESCE(project.id,'unknown-project-id') AS project_id,
       COALESCE(location.region,'Unspecified region') AS region,
+      COALESCE(location.zone,'') AS zone,
       COALESCE(sku.description,'Unspecified SKU') AS sku,
       COALESCE(NULLIF(resource.name,''),NULLIF(resource.global_name,''),'Resource not reported') AS resource,
+      COALESCE(MAX((SELECT lbl.value FROM UNNEST(labels) lbl WHERE LOWER(lbl.key) IN ('owner','owned_by','team_owner','resource_owner') LIMIT 1)), 'Unassigned') AS owner,
       SUM(cost) AS gross_cost,
       SUM(IFNULL((SELECT SUM(c.amount) FROM UNNEST(credits) c),0)) AS credits,
       SUM(cost+IFNULL((SELECT SUM(c.amount) FROM UNNEST(credits) c),0)) AS net_cost,
@@ -148,9 +162,9 @@ def load_resource_data(start_day, end_day, services, projects, regions, skus, cu
       COUNT(*) AS billing_rows
     FROM `{TABLE_ID}`
     {filter_sql()}
-    GROUP BY currency,service,project,region,sku,resource
+    GROUP BY currency,service,project,project_id,region,zone,sku,resource
     ORDER BY net_cost DESC
-    LIMIT 1000
+    LIMIT 2000
     """
     return run_query(sql, query_params(start_day,end_day,services,projects,regions,skus,currency,resource_search), "resources")
 
@@ -165,8 +179,149 @@ def style_chart(fig, height=360):
     return fig
 
 
+def extract_instance_details(resource_text):
+    text = str(resource_text or "")
+    instance_segment = re.search(r"instances/([A-Za-z0-9_.-]+)", text)
+    instance_id_match = re.search(r"instances/(\d+)", text)
+    zone_match = re.search(r"/zones/([A-Za-z0-9-]+)", text)
+    instance_name = instance_segment.group(1) if instance_segment else ""
+    instance_id = instance_id_match.group(1) if instance_id_match else ""
+    zone = zone_match.group(1) if zone_match else ""
+    if instance_name.isdigit() and not instance_id:
+        instance_id = instance_name
+        instance_name = ""
+    return pd.Series([instance_id, instance_name, zone], index=["instance_id", "instance_name", "zone_from_resource"])
+
+
+def monitoring_window(start_day, end_day):
+    start_ts = datetime.combine(start_day, datetime.min.time(), tzinfo=timezone.utc)
+    end_ts = datetime.combine(end_day + timedelta(days=1), datetime.min.time(), tzinfo=timezone.utc)
+    return start_ts, end_ts
+
+
+def build_time_interval(start_ts, end_ts):
+    return TimeInterval(
+        start_time={"seconds": int(start_ts.timestamp())},
+        end_time={"seconds": int(end_ts.timestamp())},
+    )
+
+
+def metric_value_to_float(point):
+    value = point.value
+    if value.double_value is not None:
+        return float(value.double_value)
+    if value.int64_value is not None:
+        return float(value.int64_value)
+    return None
+
+
+@st.cache_data(ttl=CACHE_TTL, show_spinner=False)
+def load_gce_utilization(project_id, start_day, end_day):
+    client = get_monitoring_client()
+    start_ts, end_ts = monitoring_window(start_day, end_day)
+    interval = build_time_interval(start_ts, end_ts)
+    project_name = f"projects/{project_id}"
+
+    def fetch_metric(metric_type):
+        request = ListTimeSeriesRequest(
+            name=project_name,
+            filter=f'metric.type = "{metric_type}" AND resource.type = "gce_instance"',
+            interval=interval,
+            view=ListTimeSeriesRequest.TimeSeriesView.FULL,
+            aggregation=Aggregation(
+                alignment_period={"seconds": 3600},
+                per_series_aligner=Aggregation.Aligner.ALIGN_MEAN,
+            ),
+        )
+        rows = []
+        series_iter = client.list_time_series(request=request)
+        for series in series_iter:
+            labels = dict(series.resource.labels)
+            metric_labels = dict(series.metric.labels)
+            vals = [metric_value_to_float(p) for p in series.points]
+            vals = [v for v in vals if v is not None]
+            if not vals:
+                continue
+            rows.append(
+                {
+                    "project_id": labels.get("project_id", ""),
+                    "instance_id": labels.get("instance_id", ""),
+                    "zone": labels.get("zone", ""),
+                    "instance_name": metric_labels.get("instance_name", ""),
+                    "value_avg": float(sum(vals) / len(vals)),
+                }
+            )
+        return pd.DataFrame(rows)
+
+    cpu_df = fetch_metric("compute.googleapis.com/instance/cpu/utilization")
+    if not cpu_df.empty:
+        cpu_df["cpu_utilization_pct"] = cpu_df["value_avg"] * 100.0
+        cpu_df = cpu_df.drop(columns=["value_avg"])
+    mem_df = fetch_metric("agent.googleapis.com/memory/percent_used")
+    if not mem_df.empty:
+        mem_df["memory_utilization_pct"] = mem_df["value_avg"]
+        mem_df = mem_df.drop(columns=["value_avg"])
+
+    if cpu_df.empty and mem_df.empty:
+        return pd.DataFrame(columns=["project_id", "instance_id", "zone", "instance_name", "cpu_utilization_pct", "memory_utilization_pct"])
+
+    if cpu_df.empty:
+        merged = mem_df
+        merged["cpu_utilization_pct"] = pd.NA
+    elif mem_df.empty:
+        merged = cpu_df
+        merged["memory_utilization_pct"] = pd.NA
+    else:
+        merged = pd.merge(cpu_df, mem_df, on=["project_id", "instance_id", "zone", "instance_name"], how="outer")
+    return merged
+
+
+def merge_cost_and_utilization(resource_df, util_df):
+    enriched = resource_df.copy()
+    parsed = enriched["resource"].apply(extract_instance_details)
+    enriched = pd.concat([enriched, parsed], axis=1)
+    enriched["cpu_utilization_pct"] = pd.NA
+    enriched["memory_utilization_pct"] = pd.NA
+    enriched["util_source"] = "Not mapped"
+
+    if util_df.empty:
+        return enriched
+
+    util = util_df.copy()
+    util["instance_id"] = util["instance_id"].astype(str)
+    util["instance_name"] = util["instance_name"].astype(str)
+
+    joined = pd.merge(enriched, util, on=["project_id", "instance_id"], how="left", suffixes=("", "_util"))
+    id_match = joined["cpu_utilization_pct_util"].notna() | joined["memory_utilization_pct_util"].notna()
+    joined.loc[id_match, "cpu_utilization_pct"] = joined.loc[id_match, "cpu_utilization_pct_util"]
+    joined.loc[id_match, "memory_utilization_pct"] = joined.loc[id_match, "memory_utilization_pct_util"]
+    joined.loc[id_match, "util_source"] = "gce_instance:instance_id"
+
+    if "cpu_utilization_pct_util" in joined.columns:
+        joined = joined.drop(columns=["cpu_utilization_pct_util", "memory_utilization_pct_util", "zone_util"], errors="ignore")
+    return joined
+
+
+def apply_underutilization_flags(df, cpu_threshold, memory_threshold, high_cost_percentile):
+    flagged = df.copy()
+    flagged["net_cost"] = pd.to_numeric(flagged["net_cost"], errors="coerce").fillna(0.0)
+    flagged["cpu_utilization_pct"] = pd.to_numeric(flagged["cpu_utilization_pct"], errors="coerce")
+    flagged["memory_utilization_pct"] = pd.to_numeric(flagged["memory_utilization_pct"], errors="coerce")
+    high_cost_cutoff = flagged["net_cost"].quantile(high_cost_percentile) if not flagged.empty else 0.0
+    flagged["is_high_cost"] = flagged["net_cost"] >= high_cost_cutoff
+    flagged["is_cpu_low"] = flagged["cpu_utilization_pct"].notna() & (flagged["cpu_utilization_pct"] < cpu_threshold)
+    flagged["is_mem_low"] = flagged["memory_utilization_pct"].notna() & (flagged["memory_utilization_pct"] < memory_threshold)
+    flagged["util_coverage"] = flagged["cpu_utilization_pct"].notna() | flagged["memory_utilization_pct"].notna()
+    flagged["underutilized"] = flagged["is_high_cost"] & (flagged["is_cpu_low"] | flagged["is_mem_low"])
+    flagged["severity"] = "Info"
+    flagged.loc[flagged["underutilized"], "severity"] = "Medium waste risk"
+    flagged.loc[flagged["is_high_cost"] & flagged["is_cpu_low"] & flagged["is_mem_low"], "severity"] = "High waste risk"
+    flagged.loc[~flagged["util_coverage"], "severity"] = "No util data"
+    return flagged
+
+
 st.markdown("""<div class="hero"><h1>💠 GCP FinOps · Cost Intelligence</h1>
-<p>Understand cloud spend by service, project, region, SKU and resource — using the latest available billing export.</p></div>""", unsafe_allow_html=True)
+<p>Understand cloud spend by service, project, region, SKU, owner and resource — with utilization context for rightsizing.</p></div>""", unsafe_allow_html=True)
 
 with st.sidebar:
     st.markdown("## 🎛️ Dashboard controls")
@@ -186,10 +341,11 @@ with st.sidebar:
         st.error("Start date must be before end date.")
         st.stop()
     st.markdown("---")
-    if st.button("↻ Refresh billing data", use_container_width=True):
+    if st.button("↻ Refresh billing + utilization cache", use_container_width=True):
         get_filter_options.clear()
         load_summary_data.clear()
         load_resource_data.clear()
+        load_gce_utilization.clear()
         st.session_state.pop("finops_resource_result",None)
         st.session_state.pop("finops_resource_signature",None)
         st.rerun()
@@ -212,6 +368,7 @@ with st.sidebar:
     currency = st.selectbox("Billing currency",currency_options,index=(currency_options.index("INR") if "INR" in currency_options else 0))
     resource_search = st.text_input("Resource name contains",placeholder="e.g. instance, bucket, database")
     st.caption(f"Source table: `{TABLE_ID}`")
+    st.caption(f"Monitoring project: `{MONITORING_PROJECT}`")
 
 try:
     with st.spinner("Loading aggregated billing summary from BigQuery…"):
@@ -248,7 +405,7 @@ k3.metric("Credits / adjustments",money(credits_total,cur_label))
 k4.metric("Billing rows represented",f"{row_count:,}")
 k5.metric("Services",f"{services_count:,}")
 
-view = st.radio("Dashboard view",["📊 Overview","🧱 Resource explorer","🧭 Cost breakdowns","⬇️ Data & export"],horizontal=True,label_visibility="collapsed")
+view = st.radio("Dashboard view",["📊 Overview","🧱 Resource explorer","⚙️ Utilization & underutilization","🧭 Cost breakdowns","⬇️ Data & export"],horizontal=True,label_visibility="collapsed")
 
 if view=="📊 Overview":
     left,right = st.columns([1.65,1])
@@ -273,21 +430,20 @@ if view=="📊 Overview":
         fig.update_layout(yaxis_title="")
         st.plotly_chart(style_chart(fig,360),use_container_width=True)
     with c2:
-        st.markdown("<div class='section-head'>Credits by service</div>",unsafe_allow_html=True)
-        credit_service = df.groupby("service",as_index=False)["credits"].sum()
-        credit_service = credit_service[credit_service["credits"]!=0].sort_values("credits").head(12)
-        if credit_service.empty:
-            st.info("No credits were recorded for these filters and dates.")
+        st.markdown("<div class='section-head'>Owner-wise cost</div>",unsafe_allow_html=True)
+        owner_cost = df.groupby("owner",as_index=False)["net_cost"].sum().sort_values("net_cost",ascending=False).head(12)
+        if owner_cost.empty:
+            st.info("No owner labels were found in billing rows.")
         else:
-            fig = px.bar(credit_service,x="credits",y="service",orientation="h",title="Largest credit amounts",color_discrete_sequence=["#e09a37"])
+            fig = px.bar(owner_cost.sort_values("net_cost"),x="net_cost",y="owner",orientation="h",title="Top owners by net cost",color_discrete_sequence=["#4d65c4"])
             fig.update_layout(yaxis_title="")
             st.plotly_chart(style_chart(fig,360),use_container_width=True)
 
 elif view=="🧱 Resource explorer":
     st.markdown("<div class='section-head'>Resource-level cost explorer</div>",unsafe_allow_html=True)
-    st.caption("Resource detail is queried only when requested. The BigQuery result is capped at 1,000 grouped combinations.")
+    st.caption("Resource detail is queried only when requested. The BigQuery result is capped at 2,000 grouped combinations.")
     signature = (str(start_day),str(end_day),tuple(services),tuple(projects),tuple(regions),tuple(skus),currency,resource_search.strip())
-    if st.button("Load resource details (up to 1,000 rows)",type="primary"):
+    if st.button("Load resource details (up to 2,000 rows)",type="primary"):
         try:
             with st.spinner("Loading resource details from BigQuery…"):
                 result = load_resource_data(start_day,end_day,services,projects,regions,skus,currency,resource_search)
@@ -303,7 +459,7 @@ elif view=="🧱 Resource explorer":
         else:
             for col in ["gross_cost","credits","net_cost","usage_amount","billing_rows"]:
                 resource_df[col] = pd.to_numeric(resource_df[col],errors="coerce").fillna(0)
-            top_n = st.select_slider("Rows to display",options=[25,50,100,250,500,1000],value=100)
+            top_n = st.select_slider("Rows to display",options=[25,50,100,250,500,1000,2000],value=100)
             st.dataframe(resource_df.head(top_n),use_container_width=True,hide_index=True,column_config={
                 "gross_cost":st.column_config.NumberColumn("Gross cost",format="%.2f"),
                 "credits":st.column_config.NumberColumn("Credits",format="%.2f"),
@@ -315,6 +471,82 @@ elif view=="🧱 Resource explorer":
             st.download_button("⬇️ Download all returned resource rows (CSV)",data=resource_df.to_csv(index=False).encode("utf-8-sig"),file_name=f"gcp_finops_resources_all_{start_day}_{end_day}.csv",mime="text/csv")
     else:
         st.info("Click **Load resource details** to run the resource-level query for the current filters.")
+
+elif view=="⚙️ Utilization & underutilization":
+    st.markdown("<div class='section-head'>Utilization-aware rightsizing (iksgcp)</div>",unsafe_allow_html=True)
+    st.caption("CPU and Memory are fetched from Cloud Monitoring. Memory requires Ops Agent on VMs.")
+    cpu_threshold = st.slider("CPU underutilized threshold (%)", min_value=5, max_value=50, value=20, step=1)
+    memory_threshold = st.slider("Memory underutilized threshold (%)", min_value=5, max_value=60, value=30, step=1)
+    high_cost_percentile = st.slider("High-cost percentile cutoff", min_value=0.50, max_value=0.99, value=0.70, step=0.01)
+
+    try:
+        with st.spinner("Loading resource costs from BigQuery…"):
+            resource_df = load_resource_data(start_day,end_day,services,projects,regions,skus,currency,resource_search)
+        with st.spinner(f"Loading CPU/Memory metrics from Cloud Monitoring for `{MONITORING_PROJECT}`…"):
+            util_df = load_gce_utilization(MONITORING_PROJECT, start_day, end_day)
+    except Exception as exc:
+        st.error("Could not load utilization data.")
+        st.code(str(exc))
+        st.info("Check service account monitoring.viewer access and metric availability in iksgcp.")
+        st.stop()
+
+    if resource_df.empty:
+        st.info("No resource costs found for current filters.")
+        st.stop()
+
+    merged = merge_cost_and_utilization(resource_df, util_df)
+    flagged = apply_underutilization_flags(merged, cpu_threshold, memory_threshold, high_cost_percentile)
+    coverage = flagged["util_coverage"].mean() * 100 if not flagged.empty else 0.0
+    under_cost = flagged.loc[flagged["underutilized"], "net_cost"].sum()
+    total_cost = flagged["net_cost"].sum()
+    under_rows = int(flagged["underutilized"].sum())
+
+    m1,m2,m3,m4 = st.columns(4)
+    m1.metric("Resources with util mapping",f"{coverage:.1f}%")
+    m2.metric("Underutilized resources",f"{under_rows:,}")
+    m3.metric("Underutilized net cost",money(under_cost,cur_label))
+    m4.metric("Cost coverage in view",money(total_cost,cur_label))
+
+    st.markdown("<div class='section-head'>High-cost underutilized resources</div>",unsafe_allow_html=True)
+    focus = flagged[flagged["underutilized"]].sort_values("net_cost",ascending=False)
+    if focus.empty:
+        st.success("No high-cost underutilized resources found for selected thresholds.")
+    else:
+        show_cols = ["severity","owner","project","service","region","resource","net_cost","cpu_utilization_pct","memory_utilization_pct","util_source"]
+        st.dataframe(focus[show_cols].head(500),use_container_width=True,hide_index=True,column_config={
+            "net_cost":st.column_config.NumberColumn("Net cost",format="%.2f"),
+            "cpu_utilization_pct":st.column_config.NumberColumn("CPU %",format="%.2f"),
+            "memory_utilization_pct":st.column_config.NumberColumn("Memory %",format="%.2f"),
+        })
+
+    c1,c2 = st.columns(2)
+    with c1:
+        waste_owner = flagged[flagged["underutilized"]].groupby("owner",as_index=False)["net_cost"].sum().sort_values("net_cost",ascending=False).head(12)
+        if waste_owner.empty:
+            st.info("No owner-level underutilized cost to display.")
+        else:
+            fig = px.bar(waste_owner.sort_values("net_cost"),x="net_cost",y="owner",orientation="h",title="Underutilized cost by owner",color_discrete_sequence=["#cd5d5d"])
+            fig.update_layout(yaxis_title="")
+            st.plotly_chart(style_chart(fig,360),use_container_width=True)
+    with c2:
+        chart_df = flagged[flagged["util_coverage"]].copy()
+        if chart_df.empty:
+            st.info("No mapped utilization data for cost-vs-utilization chart.")
+        else:
+            chart_df["util_score"] = chart_df[["cpu_utilization_pct","memory_utilization_pct"]].mean(axis=1,skipna=True)
+            fig = px.scatter(chart_df.head(400),x="util_score",y="net_cost",color="severity",
+                             hover_data=["owner","project","resource","cpu_utilization_pct","memory_utilization_pct"],
+                             title="Cost vs utilization",
+                             color_discrete_map={"High waste risk":"#d94848","Medium waste risk":"#ec9f3c","Info":"#4b79d8","No util data":"#8b95a8"})
+            fig.update_xaxes(title="Average utilization (%)")
+            fig.update_yaxes(title="Net cost")
+            st.plotly_chart(style_chart(fig,360),use_container_width=True)
+
+    export_cols = ["owner","project","project_id","service","region","resource","net_cost",
+                   "cpu_utilization_pct","memory_utilization_pct","severity","underutilized","util_source"]
+    st.download_button("⬇️ Download utilization-mapped report (CSV)",
+                       data=flagged[export_cols].to_csv(index=False).encode("utf-8-sig"),
+                       file_name=f"gcp_finops_utilization_{start_day}_{end_day}.csv",mime="text/csv")
 
 elif view=="🧭 Cost breakdowns":
     b1,b2 = st.columns(2)
