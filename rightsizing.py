@@ -25,6 +25,47 @@ PREDEFINED_RE = re.compile(r"^(?P<series>[a-z0-9]+)-(?P<shape>standard|highmem|h
 
 STATUS_ORDER = ["Idle", "Over-provisioned", "Right-sized", "Under-provisioned", "Insufficient data", "Not evaluated"]
 
+# ---- VM labels -------------------------------------------------------------------------------
+# Teams spell the same label differently (app_dev_owner / app-dev-owner / application-development-owner ...).
+# Keys are compared after lower-casing and dropping every non-alphanumeric character, so all the
+# spellings below map to one dashboard column. Aliases are listed in priority order.
+NOT_LABELED = "(not labeled)"
+LABEL_FIELDS = {
+    # column: (title shown in the dashboard, normalized label-key aliases)
+    "owner": ("Owner", ["owner"]),
+    "client": ("Client", ["client"]),
+    "environment": ("Environment", ["environment", "env"]),
+    "department": ("Department", ["department", "dept"]),
+    "application": ("Application", ["application", "applicationname", "applicationsname", "appname"]),
+    "dev_owner": ("App dev owner", ["appdevowner", "applicationdevelopmentowner", "applicationdevowner", "appdevelopmentowner"]),
+    "support_owner": ("App support owner", ["appsupportowner", "appsuppportowner", "applicationsupportowner", "applicationsupport", "appsupport"]),
+    "in_use_by": ("In use by", ["inuseby", "usedby", "inuse"]),
+}
+LABEL_COLUMNS = list(LABEL_FIELDS)
+_EMPTY_LABEL_VALUES = {"", "none", "na", "n/a", "null", "nil", "-", "unknown"}
+
+
+def _norm_key(key):
+    return re.sub(r"[^a-z0-9]", "", str(key).lower())
+
+
+def extract_labels(labels):
+    """Map a raw GCP label dict to the dashboard label columns (blank/'none' -> NOT_LABELED)."""
+    normalized = {}
+    for key, value in (labels or {}).items():
+        normalized.setdefault(_norm_key(key), str(value).strip())
+    out = {}
+    for column, (_, aliases) in LABEL_FIELDS.items():
+        value = next((normalized[a] for a in aliases
+                      if a in normalized and normalized[a].lower() not in _EMPTY_LABEL_VALUES), NOT_LABELED)
+        out[column] = value
+    return out
+
+
+def labels_text(labels):
+    """All raw labels as 'key=value; key=value' (handy for searching and for the CSV)."""
+    return "; ".join(f"{k}={v}" for k, v in sorted((labels or {}).items()))
+
 
 @dataclass
 class Params:

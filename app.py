@@ -12,7 +12,8 @@ from google.auth.transport.requests import AuthorizedSession
 from google.cloud import bigquery, monitoring_v3
 from google.oauth2 import service_account
 
-from rightsizing import Params, STATUS_ORDER, build_recommendations
+from rightsizing import (LABEL_COLUMNS, LABEL_FIELDS, NOT_LABELED, Params, STATUS_ORDER,
+                         build_recommendations, extract_labels, labels_text)
 
 st.set_page_config(page_title="GCP FinOps | Cost Intelligence", page_icon="💠", layout="wide")
 PROJECT_ID = os.getenv("GOOGLE_CLOUD_PROJECT", "iks-finops")
@@ -223,14 +224,14 @@ def _first_line(exc):
 @st.cache_data(ttl=CACHE_TTL, show_spinner=False)
 def load_vm_inventory(projects):
     """Current Compute Engine instances (machine type, status, created) for each project."""
-    cols = ["project", "instance_id", "instance_name", "zone", "machine_type", "status", "created", "gpus"]
+    cols = ["project", "instance_id", "instance_name", "zone", "machine_type", "status", "created", "gpus"] + LABEL_COLUMNS + ["labels"]
     rows, errors = [], []
     session = AuthorizedSession(get_monitoring_credentials())
     for project in projects:
         token = None
         try:
             while True:
-                params = {"maxResults": 500, "fields": "items/*/instances(id,name,machineType,status,creationTimestamp,guestAccelerators),nextPageToken"}
+                params = {"maxResults": 500, "fields": "items/*/instances(id,name,machineType,status,creationTimestamp,guestAccelerators,labels),nextPageToken"}
                 if token:
                     params["pageToken"] = token
                 resp = session.get(f"https://compute.googleapis.com/compute/v1/projects/{project}/aggregated/instances", params=params, timeout=60)
@@ -239,9 +240,12 @@ def load_vm_inventory(projects):
                 for zone_key, scoped in body.get("items", {}).items():
                     for inst in scoped.get("instances", []):
                         gpus = sum(int(a.get("acceleratorCount", 0)) for a in inst.get("guestAccelerators", []))
+                        raw_labels = inst.get("labels", {})
+                        found = extract_labels(raw_labels)
                         rows.append((project, str(inst["id"]), inst["name"], zone_key.split("/")[-1],
                                      inst["machineType"].split("/")[-1], inst["status"],
-                                     pd.to_datetime(inst.get("creationTimestamp"), utc=True, errors="coerce"), gpus))
+                                     pd.to_datetime(inst.get("creationTimestamp"), utc=True, errors="coerce"), gpus,
+                                     *[found[c] for c in LABEL_COLUMNS], labels_text(raw_labels)))
                 token = body.get("nextPageToken")
                 if not token:
                     break
@@ -594,10 +598,53 @@ elif view=="📈 CPU & RAM":
                     st.code(message)
         window_start = datetime.combine(start_day,dtime.min,tzinfo=timezone.utc)
         window_end = min(datetime.combine(end_day+timedelta(days=1),dtime.min,tzinfo=timezone.utc),datetime.now(timezone.utc))
-        recs = build_recommendations(vm_data["inventory"],vm_data["util"],vm_data["costs"],vm_data["catalogs"],window_start,window_end,
-                                     Params(target_cpu=target_cpu,target_mem=target_mem,min_saving_pct=min_saving))
-        if recs.empty:
+        all_recs = build_recommendations(vm_data["inventory"],vm_data["util"],vm_data["costs"],vm_data["catalogs"],window_start,window_end,
+                                         Params(target_cpu=target_cpu,target_mem=target_mem,min_saving_pct=min_saving))
+        filtered = all_recs
+        recs = all_recs
+        if not all_recs.empty:
+            filter_keys = {col:f"finops_vm_f_{col}" for col in LABEL_COLUMNS}
+            filter_keys.update(series="finops_vm_f_series",confidence="finops_vm_f_conf",name="finops_vm_f_name")
+            def reset_vm_filters():
+                for key in filter_keys.values():
+                    st.session_state[key] = "" if key.endswith("_name") else []
+            with st.expander("🔎 Filters: owner, client, environment, application…",expanded=True):
+                st.caption("Leave a filter empty to include everything. Values come from the VM labels in Google Cloud; "
+                           f"VMs without a usable label show as **{NOT_LABELED}**.")
+                label_cols = list(LABEL_FIELDS.items())
+                for row_start in range(0,len(label_cols),4):
+                    holders = st.columns(4)
+                    for holder,(col,(title,_)) in zip(holders,label_cols[row_start:row_start+4]):
+                        options = sorted(all_recs[col].dropna().unique(),key=lambda v:(v==NOT_LABELED,str(v).lower()))
+                        holder.multiselect(title,options,key=filter_keys[col],placeholder=f"All ({len(options)})")
+                x1,x2,x3,x4 = st.columns(4)
+                x1.multiselect("Machine series",sorted(all_recs["series"].dropna().unique()),key=filter_keys["series"],placeholder="All")
+                conf_options = sorted([c for c in all_recs["confidence"].dropna().unique() if c])
+                x2.multiselect("Confidence",conf_options,key=filter_keys["confidence"],placeholder="All")
+                x3.text_input("VM name contains",key=filter_keys["name"],placeholder="e.g. iksgcp-1")
+                with x4:
+                    st.write("")
+                    st.button("Clear filters",on_click=reset_vm_filters,use_container_width=True)
+                apply_everywhere = st.checkbox("Also apply filters to the KPIs and charts (otherwise only the recommendations table is filtered)",value=True,key="finops_vm_f_all")
+            mask = pd.Series(True,index=all_recs.index)
+            for col in LABEL_COLUMNS:
+                chosen_values = st.session_state.get(filter_keys[col]) or []
+                if chosen_values:
+                    mask &= all_recs[col].isin(chosen_values)
+            if st.session_state.get(filter_keys["series"]):
+                mask &= all_recs["series"].isin(st.session_state[filter_keys["series"]])
+            if st.session_state.get(filter_keys["confidence"]):
+                mask &= all_recs["confidence"].isin(st.session_state[filter_keys["confidence"]])
+            name_query = (st.session_state.get(filter_keys["name"]) or "").strip()
+            if name_query:
+                mask &= all_recs["instance_name"].str.contains(name_query,case=False,regex=False,na=False)
+            filtered = all_recs[mask]
+            recs = filtered if apply_everywhere else all_recs
+            st.caption(f"Showing **{len(filtered):,}** of {len(all_recs):,} running VMs after filters.")
+        if all_recs.empty:
             st.warning("No running VMs were found for the configured project(s).")
+        elif filtered.empty:
+            st.warning("No VMs match the selected filters. Clear or loosen a filter.")
         else:
             vm_cur = vm_data["costs"]["currency"].iloc[0] if not vm_data["costs"].empty else cur_label
             evaluated = recs[recs["status"].isin(["Idle","Over-provisioned","Right-sized","Under-provisioned"])]
@@ -628,7 +675,7 @@ elif view=="📈 CPU & RAM":
                         fallback = scatter["monthly_cost"].median()
                         scatter["bubble"] = scatter["monthly_cost"].fillna(fallback if pd.notna(fallback) else 1).clip(lower=1)
                         fig = px.scatter(scatter,x="cpu_p95",y="mem_p95",size="bubble",color="status",color_discrete_map=STATUS_COLORS,size_max=38,
-                                         hover_name="instance_name",hover_data={"machine_type":True,"recommended_type":True,"cpu_p95":":.0f","mem_p95":":.0f","bubble":False},
+                                         hover_name="instance_name",hover_data={"owner":True,"client":True,"machine_type":True,"recommended_type":True,"cpu_p95":":.0f","mem_p95":":.0f","bubble":False},
                                          labels={"cpu_p95":"CPU p95 of hourly peaks (%)","mem_p95":"RAM p95 of hourly peaks (%)"},
                                          title="CPU vs RAM demand (bubble size = monthly cost)")
                         fig.add_vline(x=target_cpu,line_dash="dash",line_color="#9aa6bb")
@@ -664,12 +711,38 @@ elif view=="📈 CPU & RAM":
                     fig.update_layout(barmode="group")
                     st.plotly_chart(style_chart(fig,470),use_container_width=True)
 
+                st.markdown("<div class='section-head'>Who owns the savings?</div>",unsafe_allow_html=True)
+                dim_titles = {col:title for col,(title,_) in LABEL_FIELDS.items()}
+                dim = st.selectbox("Group by",list(dim_titles),format_func=lambda c: dim_titles[c],key="finops_vm_group_dim")
+                grouped = recs.assign(
+                    saving=recs["monthly_saving"].where(recs["status"].isin(["Idle","Over-provisioned"]),0.0),
+                    extra=(-recs["monthly_saving"]).where(recs["status"]=="Under-provisioned",0.0)).groupby(dim,as_index=False).agg(
+                    VMs=("instance_id","count"),saving=("saving","sum"),extra=("extra","sum"),cost=("monthly_cost","sum"))
+                g_left,g_right = st.columns(2)
+                with g_left:
+                    g_top = grouped.nlargest(15,"saving").sort_values("saving")
+                    g_top = g_top.assign(label=g_top["saving"].map(lambda v: money(v,vm_cur)))
+                    fig = px.bar(g_top,x="saving",y=dim,orientation="h",text="label",color_discrete_sequence=["#e09a37"],
+                                 hover_data={"VMs":True,"extra":":,.0f","cost":":,.0f","saving":":,.0f","label":False},
+                                 title=f"Estimated monthly savings by {dim_titles[dim].lower()}")
+                    fig.update_layout(yaxis_title="",xaxis_title=f"Est. monthly saving ({vm_cur})")
+                    st.plotly_chart(style_chart(fig,420),use_container_width=True)
+                with g_right:
+                    top_groups = grouped.nlargest(12,"VMs")[dim]
+                    mix = recs[recs[dim].isin(top_groups)].groupby([dim,"status"],as_index=False).size().rename(columns={"size":"VMs"})
+                    fig = px.bar(mix,x="VMs",y=dim,color="status",orientation="h",color_discrete_map=STATUS_COLORS,barmode="stack",
+                                 title=f"VM status mix by {dim_titles[dim].lower()}",category_orders={"status":STATUS_ORDER})
+                    fig.update_layout(yaxis_title="",xaxis_title="VMs")
+                    st.plotly_chart(style_chart(fig,420),use_container_width=True)
+
                 st.markdown("<div class='section-head'>Right-sizing recommendations</div>",unsafe_allow_html=True)
-                chosen = st.multiselect("Status",STATUS_ORDER,default=[s for s in STATUS_ORDER if s in set(recs["status"])],key="finops_vm_status_filter")
-                table = recs[recs["status"].isin(chosen)].sort_values("monthly_saving",ascending=False,na_position="last")
-                table = table[["instance_name","zone","status","machine_type","vcpus","mem_gb","cpu_avg","cpu_p95","mem_avg","mem_p95",
-                               "recommended_type","rec_vcpus","rec_mem_gb","monthly_cost","monthly_saving","confidence","reason","instance_id"]]
+                chosen = st.multiselect("Status",STATUS_ORDER,default=[s for s in STATUS_ORDER if s in set(filtered["status"])],key="finops_vm_status_filter")
+                table = filtered[filtered["status"].isin(chosen)].sort_values("monthly_saving",ascending=False,na_position="last")
+                table = table[["instance_name"]+LABEL_COLUMNS+["zone","status","machine_type","vcpus","mem_gb","cpu_avg","cpu_p95","mem_avg","mem_p95",
+                               "recommended_type","rec_vcpus","rec_mem_gb","monthly_cost","monthly_saving","confidence","reason","instance_id","labels"]]
+                label_titles = {col:title for col,(title,_) in LABEL_FIELDS.items()}
                 st.dataframe(table,use_container_width=True,hide_index=True,column_config={
+                    **label_titles,"labels":"All labels",
                     "instance_name":"VM","machine_type":"Current type","vcpus":st.column_config.NumberColumn("vCPUs",format="%d"),
                     "mem_gb":st.column_config.NumberColumn("RAM (GB)",format="%.1f"),
                     "cpu_avg":st.column_config.NumberColumn("CPU avg %",format="%.1f"),"cpu_p95":st.column_config.NumberColumn("CPU p95 %",format="%.1f"),
@@ -733,6 +806,13 @@ elif view=="📈 CPU & RAM":
                 m4.metric("Recommended",str(vm["recommended_type"]) if vm["recommended_type"] else "n/a")
                 m5.metric("Est. monthly saving",money(vm["monthly_saving"],vm_cur) if pd.notna(vm["monthly_saving"]) else "n/a")
                 st.caption(f"{vm['reason']} · confidence: {vm['confidence'] or 'n/a'} · hourly data points: {int(vm['points'])}")
+                st.markdown("**Ownership (from VM labels)**")
+                o_cols = st.columns(4)
+                for index,(col,(title,_)) in enumerate(LABEL_FIELDS.items()):
+                    o_cols[index%4].markdown(f"<div class='muted'>{title}</div><b>{vm[col]}</b>",unsafe_allow_html=True)
+                if vm["labels"]:
+                    with st.expander("All labels on this VM"):
+                        st.code(vm["labels"].replace("; ","\n"))
                 vm_util = vm_data["util"]
                 vm_util = vm_util[vm_util["instance_id"]==picked].sort_values("time")
                 d1,d2 = st.columns(2)
