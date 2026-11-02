@@ -1,5 +1,6 @@
 # Credentials (service account keys)
 *.json
+!bu_mapping.json
 
 # Virtual environment
 .venv/

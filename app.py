@@ -14,6 +14,9 @@ from google.oauth2 import service_account
 
 from rightsizing import (LABEL_COLUMNS, LABEL_FIELDS, NOT_LABELED, Params, STATUS_ORDER,
                          build_recommendations, extract_labels, labels_text)
+import billing_leadership as bl
+import leadership as lead
+import vm_charts as vc
 
 st.set_page_config(page_title="GCP FinOps | Cost Intelligence", page_icon="💠", layout="wide")
 PROJECT_ID = os.getenv("GOOGLE_CLOUD_PROJECT", "iks-finops")
@@ -22,6 +25,7 @@ CACHE_TTL = int(os.getenv("FINOPS_CACHE_TTL", "300"))
 # CPU/RAM (Cloud Monitoring) uses a separate service account key and a fixed list of projects.
 MONITORING_KEY_FILE = os.getenv("GCP_MONITORING_KEY_FILE", os.path.join(os.path.dirname(os.path.abspath(__file__)), "iksgcp.json"))
 MONITORING_PROJECTS = [p.strip() for p in os.getenv("GCP_MONITORING_PROJECTS", "iksgcp").split(",") if p.strip()]
+NO_ORG = ((), (), ())   # (business units, feature clusters, applications) chosen in the sidebar; empty = all
 
 st.markdown("""
 <style>
@@ -127,7 +131,38 @@ def get_filter_options(start_day, end_day):
     return options
 
 
-def query_params(start_day, end_day, services, projects, regions, skus, currency, resource_search):
+@st.cache_data(ttl=CACHE_TTL, show_spinner=False)
+def get_org_options(start_day, end_day):
+    """Business unit / feature cluster / application combinations with spend in the dates (feeds the cascading sidebar filters)."""
+    sql = f"""
+    SELECT {bl.dim_sql(bl.BU)} AS business_unit, {bl.dim_sql(bl.CLUSTER)} AS feature_cluster, {bl.dim_sql(bl.APP)} AS application,
+      SUM(cost) AS cost
+    FROM `{TABLE_ID}`
+    WHERE usage_start_time >= TIMESTAMP(@start_day)
+      AND usage_start_time < TIMESTAMP(DATE_ADD(@end_day, INTERVAL 1 DAY))
+    GROUP BY 1,2,3
+    """
+    params = [bigquery.ScalarQueryParameter("start_day", "DATE", start_day),
+              bigquery.ScalarQueryParameter("end_day", "DATE", end_day)]
+    out = run_query(sql, params, "org_filters")
+    out["cost"] = pd.to_numeric(out["cost"], errors="coerce").fillna(0)
+    return out.sort_values("cost", ascending=False).reset_index(drop=True)
+
+
+def org_choices(combos, column, keep):
+    """Options for one organisation filter, limited by the filters chosen above it. Plan values first, then by spend."""
+    rows = combos
+    for col, chosen in keep.items():
+        if chosen:
+            rows = rows[rows[col].isin(chosen)]
+    values = list(dict.fromkeys(rows[column]))
+    plan = {"business_unit": bl.MAPPING["bus"], "feature_cluster": bl.MAPPING["clusters"]}.get(column, [])
+    tail = [v for v in (bl.UNMAPPED, bl.NOT_LABELED) if v in values]
+    return [v for v in plan if v in values] + [v for v in values if v not in plan and v not in tail] + tail
+
+
+def query_params(start_day, end_day, services, projects, regions, skus, currency, resource_search, org=NO_ORG):
+    bus, clusters, apps = org
     return [
         bigquery.ScalarQueryParameter("start_day", "DATE", start_day),
         bigquery.ScalarQueryParameter("end_day", "DATE", end_day),
@@ -137,12 +172,15 @@ def query_params(start_day, end_day, services, projects, regions, skus, currency
         bigquery.ArrayQueryParameter("skus", "STRING", skus),
         bigquery.ScalarQueryParameter("currency", "STRING", currency),
         bigquery.ScalarQueryParameter("resource_search", "STRING", resource_search.strip()),
+        bigquery.ArrayQueryParameter("bus", "STRING", list(bus)),
+        bigquery.ArrayQueryParameter("clusters", "STRING", list(clusters)),
+        bigquery.ArrayQueryParameter("apps", "STRING", list(apps)),
     ]
 
 
-def filter_sql():
-    return """
-    WHERE usage_start_time >= TIMESTAMP(@start_day)
+def filter_sql(start_param="start_day"):
+    return f"""
+    WHERE usage_start_time >= TIMESTAMP(@{start_param})
       AND usage_start_time < TIMESTAMP(DATE_ADD(@end_day, INTERVAL 1 DAY))
       AND (IFNULL(ARRAY_LENGTH(@services),0)=0 OR service.description IN UNNEST(@services))
       AND (IFNULL(ARRAY_LENGTH(@projects),0)=0 OR COALESCE(project.name,project.id,'Unspecified project') IN UNNEST(@projects))
@@ -150,11 +188,14 @@ def filter_sql():
       AND (IFNULL(ARRAY_LENGTH(@skus),0)=0 OR COALESCE(sku.description,'Unspecified SKU') IN UNNEST(@skus))
       AND (@currency='ALL' OR currency=@currency)
       AND (@resource_search='' OR STRPOS(LOWER(COALESCE(resource.name,resource.global_name,'')),LOWER(@resource_search))>0)
+      AND (IFNULL(ARRAY_LENGTH(@bus),0)=0 OR {bl.dim_sql(bl.BU)} IN UNNEST(@bus))
+      AND (IFNULL(ARRAY_LENGTH(@clusters),0)=0 OR {bl.dim_sql(bl.CLUSTER)} IN UNNEST(@clusters))
+      AND (IFNULL(ARRAY_LENGTH(@apps),0)=0 OR {bl.dim_sql(bl.APP)} IN UNNEST(@apps))
     """
 
 
 @st.cache_data(ttl=CACHE_TTL, show_spinner=False)
-def load_summary_data(start_day, end_day, services, projects, regions, skus, currency, resource_search):
+def load_summary_data(start_day, end_day, services, projects, regions, skus, currency, resource_search, org=NO_ORG):
     sql = f"""
     SELECT DATE(usage_start_time) AS usage_date,
       IFNULL(currency,'UNKNOWN') AS currency,
@@ -173,11 +214,11 @@ def load_summary_data(start_day, end_day, services, projects, regions, skus, cur
     {filter_sql()}
     GROUP BY usage_date,currency,service,project,region,sku
     """
-    return run_query(sql, query_params(start_day,end_day,services,projects,regions,skus,currency,resource_search), "summary")
+    return run_query(sql, query_params(start_day,end_day,services,projects,regions,skus,currency,resource_search,org), "summary")
 
 
 @st.cache_data(ttl=CACHE_TTL, show_spinner=False)
-def load_resource_data(start_day, end_day, services, projects, regions, skus, currency, resource_search):
+def load_resource_data(start_day, end_day, services, projects, regions, skus, currency, resource_search, org=NO_ORG):
     sql = f"""
     SELECT IFNULL(currency,'UNKNOWN') AS currency,
       COALESCE(service.description,'Unspecified service') AS service,
@@ -199,7 +240,91 @@ def load_resource_data(start_day, end_day, services, projects, regions, skus, cu
     ORDER BY net_cost DESC
     LIMIT 1000
     """
-    return run_query(sql, query_params(start_day,end_day,services,projects,regions,skus,currency,resource_search), "resources")
+    return run_query(sql, query_params(start_day,end_day,services,projects,regions,skus,currency,resource_search,org), "resources")
+
+
+def previous_period_start(start_day, end_day):
+    """First day of the period of the same length that ends the day before ``start_day``."""
+    return start_day - timedelta(days=(end_day - start_day).days + 1)
+
+
+def leadership_params(start_day, end_day, prev_start, services, projects, regions, skus, currency, resource_search, org=NO_ORG):
+    return query_params(start_day, end_day, services, projects, regions, skus, currency, resource_search, org) + [
+        bigquery.ScalarQueryParameter("prev_start", "DATE", prev_start)]
+
+
+@st.cache_data(ttl=CACHE_TTL, show_spinner=False)
+def load_leadership_billing(start_day, end_day, prev_start, services, projects, regions, skus, currency, resource_search, org=NO_ORG):
+    """Net cost for the selected and the previous period, grouped by every leadership dimension (labels, service, project)."""
+    dims = ",\n      ".join(f"{bl.dim_sql(d)} AS {d}" for d in bl.ALL_DIMS)
+    sql = f"""
+    SELECT IF(usage_start_time >= TIMESTAMP(@start_day),'current','previous') AS period,
+      IFNULL(currency,'UNKNOWN') AS currency,
+      {dims},
+      SUM(cost) AS gross_cost,
+      SUM(cost+IFNULL((SELECT SUM(c.amount) FROM UNNEST(credits) c),0)) AS net_cost
+    FROM `{TABLE_ID}`
+    {filter_sql("prev_start")}
+    GROUP BY {",".join(str(i) for i in range(1, 3 + len(bl.ALL_DIMS)))}
+    """
+    return bl.prepare(run_query(sql, leadership_params(start_day, end_day, prev_start, services, projects, regions, skus, currency, resource_search, org), "leadership"))
+
+
+@st.cache_data(ttl=CACHE_TTL, show_spinner=False)
+def load_leadership_daily(start_day, end_day, prev_start, services, projects, regions, skus, currency, resource_search, org=NO_ORG):
+    sql = f"""
+    SELECT IF(usage_start_time >= TIMESTAMP(@start_day),'current','previous') AS period,
+      DATE(usage_start_time) AS usage_date,
+      {bl.dim_sql(bl.BU)} AS {bl.BU},
+      SUM(cost+IFNULL((SELECT SUM(c.amount) FROM UNNEST(credits) c),0)) AS net_cost
+    FROM `{TABLE_ID}`
+    {filter_sql("prev_start")}
+    GROUP BY 1,2,3
+    """
+    return bl.prepare_daily(run_query(sql, leadership_params(start_day, end_day, prev_start, services, projects, regions, skus, currency, resource_search, org), "leadership_daily"))
+
+
+@st.cache_data(ttl=CACHE_TTL, show_spinner=False)
+def load_leadership_drill(dim, value, start_day, end_day, services, projects, regions, skus, currency, resource_search, org=NO_ORG):
+    """Daily cost and the biggest resources behind one clicked bar. ``dim`` must be a known dimension (whitelisted by dim_sql)."""
+    expr = bl.dim_sql(dim)
+    params = query_params(start_day, end_day, services, projects, regions, skus, currency, resource_search, org) + [
+        bigquery.ScalarQueryParameter("dim_value", "STRING", value)]
+    where = f"{filter_sql()} AND ({expr}) = @dim_value"
+    daily = run_query(f"""
+    SELECT DATE(usage_start_time) AS usage_date, SUM(cost+IFNULL((SELECT SUM(c.amount) FROM UNNEST(credits) c),0)) AS net_cost
+    FROM `{TABLE_ID}` {where} GROUP BY 1""", params, "leadership_drill_daily")
+    resources = run_query(f"""
+    SELECT COALESCE(NULLIF(resource.name,''),NULLIF(resource.global_name,''),'Resource not reported') AS resource,
+      COALESCE(service.description,'Unspecified service') AS service,
+      COALESCE(project.name,project.id,'Unspecified project') AS project,
+      SUM(cost+IFNULL((SELECT SUM(c.amount) FROM UNNEST(credits) c),0)) AS net_cost
+    FROM `{TABLE_ID}` {where} GROUP BY 1,2,3 ORDER BY net_cost DESC LIMIT 25""", params, "leadership_drill_resources")
+    for frame in (daily, resources):
+        frame["net_cost"] = pd.to_numeric(frame["net_cost"], errors="coerce").fillna(0)
+    return daily, resources
+
+
+@st.cache_data(ttl=CACHE_TTL, show_spinner=False)
+def load_resource_counts(start_day, end_day, services, projects, regions, skus, currency, resource_search, org=NO_ORG):
+    """Billed resources and projects in the selected period, and how many resources roll up to a business unit.
+
+    Transient resources (BigQuery jobs, Dataproc batches, Dataflow jobs: millions of IDs) and resources that cost less than 1
+    are left out, so the count reflects the inventory leaders can act on."""
+    res = "COALESCE(NULLIF(resource.global_name,''),NULLIF(resource.name,''))"
+    sql = f"""
+    WITH r AS (
+      SELECT {res} AS res, ANY_VALUE(project.id) AS project, LOGICAL_OR({bl.unit_sql()}) AS mapped,
+        SUM(cost+IFNULL((SELECT SUM(c.amount) FROM UNNEST(credits) c),0)) AS net_cost
+      FROM `{TABLE_ID}`
+      {filter_sql()}
+        AND {res} IS NOT NULL AND NOT REGEXP_CONTAINS({res}, r'/(jobs|batches)/')
+      GROUP BY 1
+      HAVING net_cost >= 1)
+    SELECT COUNT(*) AS resources, COUNTIF(mapped) AS mapped, COUNT(DISTINCT project) AS projects FROM r
+    """
+    row = run_query(sql, query_params(start_day,end_day,services,projects,regions,skus,currency,resource_search,org), "resource_counts").iloc[0]
+    return {k: int(row[k] or 0) for k in ("resources","mapped","projects")}
 
 
 CPU_METRIC = "compute.googleapis.com/instance/cpu/utilization"      # fraction 0-1, no agent needed
@@ -360,6 +485,178 @@ def load_vm_costs(projects, start_day, end_day, currency):
     return df.sort_values("net_cost", ascending=False).drop_duplicates("instance_id")
 
 
+def load_vm_bundle(projects_t, start_day, end_day, currency):
+    """Load VM inventory, hourly CPU/RAM, machine types and billed cost into session state.
+
+    Shared by the CPU & RAM and Leadership views, so loading once serves both."""
+    try:
+        with st.spinner("Loading VM inventory, utilization and billing cost…"):
+            inventory,inv_errors = load_vm_inventory(projects_t)
+            util,util_errors = load_vm_metrics(projects_t,start_day,end_day)
+            zones = tuple(sorted(inventory.loc[inventory["status"]=="RUNNING","zone"].unique()))
+            catalogs,cat_errors = load_machine_type_catalog(projects_t[0],zones) if zones else ({},[])
+            cost_errors = []
+            try:
+                vm_costs = load_vm_costs(projects_t,start_day,end_day,currency)
+            except Exception as exc:
+                vm_costs = pd.DataFrame(columns=["instance_id","currency","net_cost"])
+                cost_errors.append(f"billing cost lookup failed: {str(exc).splitlines()[0][:200]}")
+        st.session_state["finops_vm_data"] = dict(inventory=inventory,util=util,catalogs=catalogs,costs=vm_costs,
+                                                  errors=list(dict.fromkeys(inv_errors+util_errors+cat_errors+cost_errors)))
+        st.session_state["finops_vm_signature"] = (str(start_day),str(end_day),projects_t,currency)
+    except Exception as exc:
+        st.error("Unable to load VM data.")
+        st.code(str(exc))
+
+
+def render_lead_details(rows, kind, value, subtitle, vm_data, fmt_money):
+    """Body of the details pop-up opened by clicking a leadership chart."""
+    st.caption(subtitle)
+    if rows.empty:
+        st.info("No VMs found for this selection.")
+        return
+    if kind=="vm":
+        v = rows.iloc[0]
+        t = vc.prepare_table(rows).iloc[0]
+        c1,c2,c3,c4 = st.columns(4)
+        c1.markdown(vc.kpi_card("Current size",v["machine_type"],f"{v['vcpus']:.0f} vCPU · {v['mem_gb']:.1f} GB RAM",vc.CURRENT_COLOR),unsafe_allow_html=True)
+        c2.markdown(vc.kpi_card("Status",v["status"],t["action"],vc.STATUS_COLORS.get(v["status"],vc.CURRENT_COLOR)),unsafe_allow_html=True)
+        has_rec = pd.notna(v["rec_vcpus"])
+        c3.markdown(vc.kpi_card("Recommended",str(v["recommended_type"]) if v["recommended_type"] else "—",
+                                f"{v['rec_vcpus']:.0f} vCPU · {v['rec_mem_gb']:.1f} GB RAM" if has_rec else "",vc.RECOMMENDED_COLOR),unsafe_allow_html=True)
+        saving = v["monthly_saving"]
+        c4.markdown(vc.kpi_card("Est. monthly saving",fmt_money(saving) if pd.notna(saving) else "n/a",
+                                f"VM costs {fmt_money(v['monthly_cost'])} / month" if pd.notna(v["monthly_cost"]) else "no billing match",
+                                "#10B981" if (pd.isna(saving) or saving>=0) else "#EF4444"),unsafe_allow_html=True)
+        st.caption(f"{v['reason']} · confidence: {v['confidence'] or 'n/a'}")
+        g1,g2 = st.columns(2)
+        fig = vc.gauge(v["cpu_p95"],"CPU · p95 of hourly peaks",60,85,vc.CPU_COLOR)
+        if fig is not None:
+            g1.plotly_chart(fig,use_container_width=True)
+        fig = vc.gauge(v["mem_p95"],"RAM · p95 of hourly peaks",70,90,vc.RAM_COLOR)
+        if fig is not None:
+            g2.plotly_chart(fig,use_container_width=True)
+        else:
+            g2.info("No RAM data for this VM (Ops Agent not installed).")
+        util = vm_data["util"]
+        vm_util = util[util["instance_id"]==value].sort_values("time")
+        t1,t2 = st.columns(2)
+        if vm_util["cpu_pct"].notna().any():
+            t1.plotly_chart(vc.vm_timeseries(vm_util,"cpu_pct","cpu_max_pct","CPU",vc.CPU_COLOR,v["cpu_p95"],60,85),use_container_width=True)
+        if vm_util["mem_pct"].notna().any():
+            t2.plotly_chart(vc.vm_timeseries(vm_util,"mem_pct","mem_max_pct","RAM",vc.RAM_COLOR,v["mem_p95"],70,90),use_container_width=True)
+        if pd.notna(v["vcpus"]):
+            st.plotly_chart(vc.vm_capacity(v),use_container_width=True)
+        st.markdown("**Ownership (from VM labels)**")
+        o_cols = st.columns(4)
+        for index,(col,(title,_)) in enumerate(LABEL_FIELDS.items()):
+            o_cols[index%4].markdown(f"<div class='muted'>{title}</div><b>{v[col]}</b>",unsafe_allow_html=True)
+        if v["labels"]:
+            with st.expander("All labels on this VM"):
+                st.code(v["labels"].replace("; ","\n"))
+        return
+    # a group of VMs (status / client / owner / environment / ... / VMs missing a label)
+    down = rows[rows["status"].isin(lead.DOWNSIZE)]
+    under = rows[rows["status"]=="Under-provisioned"]
+    c1,c2,c3,c4 = st.columns(4)
+    c1.markdown(vc.kpi_card("VMs",f"{len(rows):,}","in this selection",vc.CPU_COLOR),unsafe_allow_html=True)
+    c2.markdown(vc.kpi_card("Monthly compute cost",fmt_money(rows["monthly_cost"].sum(skipna=True)),"billed core + RAM + licences",vc.CURRENT_COLOR),unsafe_allow_html=True)
+    c3.markdown(vc.kpi_card("Est. monthly saving",fmt_money(down["monthly_saving"].sum(skipna=True)),f"from downsizing {len(down)} VM{'s' if len(down)!=1 else ''}","#10B981"),unsafe_allow_html=True)
+    c4.markdown(vc.kpi_card("Extra cost to fix hot VMs",fmt_money(-under["monthly_saving"].sum(skipna=True)),f"{len(under)} under-provisioned","#EF4444"),unsafe_allow_html=True)
+    if kind!="unlabeled":
+        fig,_lookup = lead.top_vm_savings(rows,fmt_money,n=10,clickable=False)
+        if fig is not None:
+            st.plotly_chart(fig,use_container_width=True)
+        st.markdown("<div class='sec-title'>VMs in this selection</div>",unsafe_allow_html=True)
+        styled,labels = lead.detail_table(rows)
+        cfg = dict(labels)
+        cfg.update(cpu_p95=st.column_config.NumberColumn("CPU p95 %",format="%.0f"),mem_p95=st.column_config.NumberColumn("RAM p95 %",format="%.0f"),
+                   monthly_cost=st.column_config.NumberColumn("Monthly cost",format="%.0f"),monthly_saving=st.column_config.NumberColumn("Est. monthly saving",format="%.0f"))
+        st.dataframe(styled,use_container_width=True,hide_index=True,column_config=cfg)
+        csv_frame = rows.drop(columns=["labels"],errors="ignore")
+    else:
+        st.markdown("<div class='sec-title'>VMs missing this label</div>",unsafe_allow_html=True)
+        cols = ["instance_name","zone","machine_type","status","owner","client","environment","monthly_cost","labels"]
+        st.dataframe(rows[cols].sort_values("monthly_cost",ascending=False,na_position="last"),use_container_width=True,hide_index=True,
+                     column_config={"instance_name":"VM","machine_type":"Type","monthly_cost":st.column_config.NumberColumn("Monthly cost",format="%.0f"),"labels":"Labels it already has"})
+        csv_frame = rows[cols]
+    st.download_button("⬇️ Download this list (CSV)",data=csv_frame.to_csv(index=False).encode("utf-8-sig"),
+                       file_name=f"gcp_finops_leadership_{kind}_{str(value)[:30]}.csv",mime="text/csv",key=f"lead_dl_{kind}_{value}")
+
+
+def render_bill_details(dim, value, billing, filters, fmt_money, start_day, end_day):
+    """Body of the pop-up opened by clicking a billing leadership chart or action."""
+    _title,subtitle = bl.describe(dim,value)
+    st.caption(subtitle)
+    rows = bl.select_rows(billing,dim,value)
+    cost = float(rows.loc[rows["period"]=="current","net_cost"].sum())
+    prev = float(rows.loc[rows["period"]=="previous","net_cost"].sum())
+    if rows.empty or (cost==0 and prev==0):
+        st.info("No cost found for this selection.")
+        return
+    total = float(billing.loc[billing["period"]=="current","net_cost"].sum())
+    delta = cost-prev
+    delta_pct = delta/prev if prev>0 else float("nan")
+    services = bl.group_table(rows,"service")
+    projects = bl.group_table(rows,"project")
+    top = services.iloc[0] if len(services) else None
+    c1,c2,c3,c4 = st.columns(4)
+    c1.markdown(vc.kpi_card("Net cost",fmt_money(cost),f"{cost/total:.1%} of total spend" if total>0 else "",bl.BASE_COLOR),unsafe_allow_html=True)
+    c2.markdown(vc.kpi_card("vs previous period",bl.arrow_text(delta,delta_pct,fmt_money) if prev>0 else "new",f"was {fmt_money(prev)}",
+                            "#EF4444" if delta>0 else "#10B981"),unsafe_allow_html=True)
+    c3.markdown(vc.kpi_card("Services · projects",f"{int((services['cost']>0).sum())} · {int((projects['cost']>0).sum())}","with cost in this selection","#8B5CF6"),unsafe_allow_html=True)
+    c4.markdown(vc.kpi_card("Biggest service",str(top["value"]) if top is not None else "—",f"{top['share']:.0%} of this selection" if top is not None else "","#06B6D4"),unsafe_allow_html=True)
+    if dim==bl.BU and value==bl.UNMAPPED:
+        st.warning("**Action:** these features are not in the BU billing plan. Open the **By feature** tab, then add each feature to the right "
+                   "business unit and application in `bu_mapping.json`.")
+    elif value==bl.NOT_LABELED:
+        msg = "**Action:** this cost cannot be charged to anyone. Open the **By service**, **By project** and **Top resources** tabs and start with the biggest rows."
+        keys = bl.source_keys(dim)
+        if keys:
+            label = "feature" if dim in bl.DERIVED else bl.TITLES[dim].lower()
+            msg += f" Then add the {label} label (key: {', '.join(f'`{k}`' for k in keys)}) in Google Cloud."
+        st.warning(msg)
+    elif delta>0 and prev>0 and delta_pct>=bl.SPIKE_PCT:
+        grown = services[services["delta"]>0].sort_values("delta",ascending=False)
+        if len(grown):
+            g = grown.iloc[0]
+            st.warning(f"**Action:** cost is up {delta_pct:.0%} ({fmt_money(delta)}). The biggest increase is **{g['value']}** (+{fmt_money(g['delta'])}). "
+                       "Check the tabs below, then ask the owner whether this is expected.")
+    try:
+        daily,resources = load_leadership_drill(dim,value,start_day,end_day,*filters)
+    except Exception as exc:
+        st.error("Could not load the daily trend and resources for this selection.")
+        st.code(str(exc))
+        daily,resources = pd.DataFrame(),pd.DataFrame()
+    if not daily.empty:
+        st.plotly_chart(bl.drill_trend(daily,value),use_container_width=True,key="bill_drill_trend")
+    others = [d for d in bl.ALL_DIMS if d!=dim]
+    tabs = st.tabs([f"By {bl.TITLES[d].lower()}" for d in others]+["Top resources"])
+    for tab,d in zip(tabs,others):
+        with tab:
+            fig,table = bl.breakdown_pie(rows,d,fmt_money)
+            if fig is None:
+                st.info("Nothing to show.")
+                continue
+            st.plotly_chart(fig,use_container_width=True,key=f"bill_bd_{d}")
+            shown = table.sort_values("cost",ascending=False).head(50).assign(delta_pct=lambda t: t["delta_pct"]*100,share=lambda t: t["share"]*100)
+            st.dataframe(shown,use_container_width=True,hide_index=True,column_config={
+                "value":bl.TITLES[d],"cost":st.column_config.NumberColumn("Net cost",format="%.0f"),
+                "prev":st.column_config.NumberColumn("Previous period",format="%.0f"),
+                "delta":st.column_config.NumberColumn("Change",format="%.0f"),
+                "delta_pct":st.column_config.NumberColumn("Change %",format="%.0f%%"),
+                "share":st.column_config.NumberColumn("Share %",format="%.0f%%")})
+    with tabs[-1]:
+        if resources.empty:
+            st.info("No resource detail available.")
+        else:
+            st.caption("Top 25 resources by net cost in the selected dates.")
+            st.dataframe(resources,use_container_width=True,hide_index=True,column_config={
+                "resource":"Resource","service":"Service","project":"Project","net_cost":st.column_config.NumberColumn("Net cost",format="%.0f")})
+    st.download_button("⬇️ Download this selection (CSV)",data=rows.to_csv(index=False).encode("utf-8-sig"),
+                       file_name=f"gcp_finops_leadership_{dim}_{str(value)[:30]}.csv",mime="text/csv",key=f"bill_dl_{dim}_{value}")
+
+
 def style_chart(fig, height=360):
     fig.update_layout(height=height, margin=dict(l=10,r=10,t=48,b=10), paper_bgcolor="white",
                       plot_bgcolor="white", font=dict(family="Arial",color="#34435b"),
@@ -370,31 +667,49 @@ def style_chart(fig, height=360):
     return fig
 
 
-st.markdown("""<div class="hero"><h1>💠 GCP FinOps · Cost Intelligence</h1>
+VIEWS = ["📊 Overview","🏛️ Leadership","🧱 Resource explorer","🧭 Cost breakdowns","📈 CPU & RAM","⬇️ Data & export"]
+LEADERSHIP = "🏛️ Leadership"
+PERIODS = {"Last 7 days":7,"Last 30 days":30,"Last 60 days":60,"Last 90 days":90,"Last 180 days":180}
+st.markdown(bl.EXEC_CSS,unsafe_allow_html=True)
+hero_slot = st.empty()
+if st.session_state.get("view_nav",VIEWS[0])==LEADERSHIP:
+    hero_slot.markdown(bl.exec_hero("…","Loading billing data",""),unsafe_allow_html=True)
+else:
+    hero_slot.markdown("""<div class="hero"><h1>💠 GCP FinOps · Cost Intelligence</h1>
 <p>Understand cloud spend by service, project, region, SKU and resource — using the latest available billing export.</p></div>""", unsafe_allow_html=True)
+view = st.radio("Dashboard view",VIEWS,horizontal=True,label_visibility="collapsed",key="view_nav")
 
-with st.sidebar:
-    st.markdown("## 🎛️ Dashboard controls")
-    st.caption("Filters apply to all views.")
-    period = st.selectbox("Quick date range", ["Last 7 days","Last 30 days","Last 60 days","Last 90 days","Custom"], index=1)
-    today = date.today()
+# "View by" row: period plus the organisation filters (business unit -> feature cluster -> product). They apply to every view.
+today = date.today()
+vb_label,vb_bu,vb_cluster,vb_app,vb_period,vb_note = st.columns([0.55,1.5,1.5,1.5,1.25,1.0])
+vb_label.markdown('<div class="xview">VIEW BY</div>',unsafe_allow_html=True)
+with vb_period:
+    period = st.selectbox("Period",list(PERIODS)+["Custom"],index=1,label_visibility="collapsed")
     if period == "Custom":
-        chosen = st.date_input("Billing usage dates", value=(today-timedelta(days=29),today), max_value=today)
+        chosen = st.date_input("Billing usage dates",value=(today-timedelta(days=29),today),max_value=today,label_visibility="collapsed")
         if isinstance(chosen,(tuple,list)) and len(chosen)==2:
             start_day,end_day = chosen
         else:
             start_day=end_day=chosen
     else:
-        days = {"Last 7 days":7,"Last 30 days":30,"Last 60 days":60,"Last 90 days":90}[period]
-        start_day,end_day = today-timedelta(days=days-1),today
-    if start_day>end_day:
-        st.error("Start date must be before end date.")
-        st.stop()
-    st.markdown("---")
+        start_day,end_day = today-timedelta(days=PERIODS[period]-1),today
+if start_day>end_day:
+    st.error("Start date must be before end date.")
+    st.stop()
+vb_note.markdown('<div class="xnote">Filters apply to every view</div>',unsafe_allow_html=True)
+
+with st.sidebar:
+    st.markdown("## 🎛️ Dashboard controls")
+    st.caption("Period, business unit, feature cluster and product are in the **View by** row at the top. These filters also apply to all views.")
     if st.button("↻ Refresh billing data", use_container_width=True):
         get_filter_options.clear()
+        get_org_options.clear()
         load_summary_data.clear()
         load_resource_data.clear()
+        load_resource_counts.clear()
+        load_leadership_billing.clear()
+        load_leadership_daily.clear()
+        load_leadership_drill.clear()
         load_vm_inventory.clear()
         load_vm_metrics.clear()
         load_vm_costs.clear()
@@ -414,7 +729,23 @@ except Exception as exc:
     st.info("Check credentials, BigQuery Job User permission, and Data Viewer access.")
     st.stop()
 
+try:
+    org_combos = get_org_options(start_day,end_day)
+except Exception:
+    # fall back to the BU billing plan itself when the options query fails
+    org_combos = pd.DataFrame([(bu,bl.NOT_LABELED,app) for app,bu in bl.MAPPING["app_bu"].items()],
+                              columns=["business_unit","feature_cluster","application"])
+
+bus_sel = vb_bu.multiselect("Business unit",org_choices(org_combos,"business_unit",{}),placeholder="All business units",format_func=bl.bu_name,
+                            label_visibility="collapsed",help="Rolled up from the feature label with bu_mapping.json.")
+clusters_sel = vb_cluster.multiselect("Feature cluster",org_choices(org_combos,"feature_cluster",{"business_unit":bus_sel}),placeholder="All feature clusters",
+                                      format_func=lambda v: bl.display(bl.CLUSTER,v),label_visibility="collapsed")
+apps_sel = vb_app.multiselect("Product",org_choices(org_combos,"application",{"business_unit":bus_sel,"feature_cluster":clusters_sel}),
+                              placeholder="All products",format_func=lambda v: bl.display(bl.APP,v),label_visibility="collapsed")
+org = (tuple(bus_sel),tuple(clusters_sel),tuple(apps_sel))
+
 with st.sidebar:
+    st.markdown("**Billing filters**")
     services = st.multiselect("Service",options["services"],placeholder="All services")
     projects = st.multiselect("Project",options["projects"],placeholder="All projects")
     regions = st.multiselect("Region",options["regions"],placeholder="All regions")
@@ -426,7 +757,7 @@ with st.sidebar:
 
 try:
     with st.spinner("Loading aggregated billing summary from BigQuery…"):
-        df = load_summary_data(start_day,end_day,services,projects,regions,skus,currency,resource_search)
+        df = load_summary_data(start_day,end_day,services,projects,regions,skus,currency,resource_search,org)
 except Exception as exc:
     st.error("Unable to load the billing summary.")
     st.code(str(exc))
@@ -446,20 +777,19 @@ if len(selected_currency)>1:
     st.warning("Multiple currencies are included. Totals are not converted; select one currency for a meaningful total.")
 cur_label = selected_currency[0] if len(selected_currency)==1 else "Mixed currency"
 
-st.markdown(f"<div class='muted'>Usage period: <b>{start_day:%d %b %Y}</b> to <b>{end_day:%d %b %Y}</b> · Latest available billing export, not live metering</div>",unsafe_allow_html=True)
-if pd.notna(latest_export):
-    st.caption(f"Latest export timestamp: {latest_export.strftime('%d %b %Y, %H:%M UTC')} · Cached for {CACHE_TTL//60} minute(s).")
+if view!=LEADERSHIP:
+    st.markdown(f"<div class='muted'>Usage period: <b>{start_day:%d %b %Y}</b> to <b>{end_day:%d %b %Y}</b> · Latest available billing export, not live metering</div>",unsafe_allow_html=True)
+    if pd.notna(latest_export):
+        st.caption(f"Latest export timestamp: {latest_export.strftime('%d %b %Y, %H:%M UTC')} · Cached for {CACHE_TTL//60} minute(s).")
+    gross,credits_total,net = df["gross_cost"].sum(),df["credits"].sum(),df["net_cost"].sum()
+    row_count,services_count = int(df["billing_rows"].sum()),df["service"].nunique()
+    k1,k2,k3,k4,k5 = st.columns(5)
+    k1.metric("Net cost after credits",money(net,cur_label))
+    k2.metric("Gross cost",money(gross,cur_label))
+    k3.metric("Credits / adjustments",money(credits_total,cur_label))
+    k4.metric("Billing rows represented",f"{row_count:,}")
+    k5.metric("Services",f"{services_count:,}")
 
-gross,credits_total,net = df["gross_cost"].sum(),df["credits"].sum(),df["net_cost"].sum()
-row_count,services_count = int(df["billing_rows"].sum()),df["service"].nunique()
-k1,k2,k3,k4,k5 = st.columns(5)
-k1.metric("Net cost after credits",money(net,cur_label))
-k2.metric("Gross cost",money(gross,cur_label))
-k3.metric("Credits / adjustments",money(credits_total,cur_label))
-k4.metric("Billing rows represented",f"{row_count:,}")
-k5.metric("Services",f"{services_count:,}")
-
-view = st.radio("Dashboard view",["📊 Overview","🧱 Resource explorer","🧭 Cost breakdowns","📈 CPU & RAM","⬇️ Data & export"],horizontal=True,label_visibility="collapsed")
 
 if view=="📊 Overview":
     left,right = st.columns([1.65,1])
@@ -497,11 +827,11 @@ if view=="📊 Overview":
 elif view=="🧱 Resource explorer":
     st.markdown("<div class='section-head'>Resource-level cost explorer</div>",unsafe_allow_html=True)
     st.caption("Resource detail is queried only when requested. The BigQuery result is capped at 1,000 grouped combinations.")
-    signature = (str(start_day),str(end_day),tuple(services),tuple(projects),tuple(regions),tuple(skus),currency,resource_search.strip())
+    signature = (str(start_day),str(end_day),tuple(services),tuple(projects),tuple(regions),tuple(skus),currency,resource_search.strip(),org)
     if st.button("Load resource details (up to 1,000 rows)",type="primary"):
         try:
             with st.spinner("Loading resource details from BigQuery…"):
-                result = load_resource_data(start_day,end_day,services,projects,regions,skus,currency,resource_search)
+                result = load_resource_data(start_day,end_day,services,projects,regions,skus,currency,resource_search,org)
             st.session_state["finops_resource_result"] = result
             st.session_state["finops_resource_signature"] = signature
         except Exception as exc:
@@ -551,6 +881,414 @@ elif view=="🧭 Cost breakdowns":
         fig = px.imshow(pivot,aspect="auto",color_continuous_scale="Blues",labels=dict(x="Project",y="Service",color="Net cost"),title="Top services and projects")
         st.plotly_chart(style_chart(fig,480),use_container_width=True)
 
+elif view==LEADERSHIP:
+    st.markdown(vc.KPI_CSS+bl.LEAD_CSS,unsafe_allow_html=True)
+    tab_cost,tab_vm = st.tabs(["🏢 Executive overview","🖥️ VM efficiency"])
+    with tab_cost:
+        prev_start = previous_period_start(start_day,end_day)
+        bill_filters = (services,projects,regions,skus,currency,resource_search,org)
+        billing = daily_all = None
+        try:
+            with st.spinner("Loading leadership billing data…"):
+                billing = load_leadership_billing(start_day,end_day,prev_start,*bill_filters)
+                daily_all = load_leadership_daily(start_day,end_day,prev_start,*bill_filters)
+        except Exception as exc:
+            st.error("Unable to load the leadership billing data.")
+            st.code(str(exc))
+        if billing is not None and billing.loc[billing["period"]=="current","net_cost"].abs().sum()==0:
+            st.warning("No cost found for these dates and filters.")
+        elif billing is not None:
+            fmt_money = lambda v: money(v,cur_label)
+            sm = bl.summary(billing,daily_all,date.today())
+            score = bl.bu_scorecard(billing,daily_all,date.today())
+            colors = bl.bu_colors()
+            has_prev = sm["prev"]>0
+            bu_options = score.loc[score["cost"]>0,"value"].tolist()
+            if bu_options and st.session_state.get("bu_focus") not in bu_options:
+                st.session_state["bu_focus"] = bu_options[0]
+            found = bl.insights(billing,score,fmt_money)
+
+            def open_or_focus(dim,value):
+                """A business unit opens in the product view and deep dive; anything else opens the details pop-up."""
+                if dim==bl.BU and value in bu_options:
+                    st.session_state["bu_focus"] = value
+                elif value is not None:
+                    st.session_state["bill_open"] = (dim,value)
+
+            def on_chart_click(chart_key,lookup,dim):
+                """Callback for a click on a chart slice or bar; the pop-up / focus change shows on the rerun."""
+                def _cb():
+                    state = st.session_state.get(chart_key)
+                    open_or_focus(dim,bl.resolve_click(state["selection"]["points"] if state else [],lookup))
+                return _cb
+
+            def on_pick(widget_key,dim):
+                """Callback for the pills under a pie: open that value, then clear the pill so the same one can be picked again."""
+                def _cb():
+                    open_or_focus(dim,st.session_state.get(widget_key))
+                    st.session_state[widget_key] = None
+                return _cb
+
+            def on_action_pick():
+                """Callback for the pills under the leadership actions: open the numbered action."""
+                number = st.session_state.get("exec_act_pick")
+                if number:
+                    item = found[number-1]
+                    open_or_focus(item["dim"],item["value"])
+                st.session_state["exec_act_pick"] = None
+
+            def on_table_pick():
+                """Callback for a row picked in the scorecard table: focus that unit."""
+                picked = (st.session_state.get("bu_table") or {}).get("selection",{}).get("rows",[])
+                if picked:
+                    open_or_focus(bl.BU,score.iloc[picked[0]]["value"])
+
+            def on_coverage_click(chart_key,lookup):
+                """Callback for the coverage bars: the lookup holds the (dimension, value) to open."""
+                def _cb():
+                    state = st.session_state.get(chart_key)
+                    key = bl.resolve_click(state["selection"]["points"] if state else [],lookup)
+                    if key is not None:
+                        st.session_state["bill_open"] = key
+                return _cb
+
+            def pie_card(rows,dim,key,pick_label="Open details for",pills=True,**kwargs):
+                """A spend donut. Clicking a slice opens it; the pills underneath do the same and always work."""
+                fig,lookup,options = bl.spend_pie(rows,dim,fmt_money,**kwargs)
+                if fig is None:
+                    st.info(f"No {bl.TITLES[dim].lower()} cost to show.")
+                    return
+                if kwargs.get("clickable",True):
+                    st.plotly_chart(fig,use_container_width=True,key=key,on_select=on_chart_click(key,lookup,dim),selection_mode="points",
+                                    config={"displayModeBar":False})
+                    if pills:
+                        st.pills(pick_label,options,selection_mode="single",key=f"{key}_pick",format_func=lambda v: bl.display(dim,v),
+                                 on_change=on_pick(f"{key}_pick",dim))
+                else:
+                    st.plotly_chart(fig,use_container_width=True,key=key,config={"displayModeBar":False})
+
+            # VM utilization (shared with the CPU & RAM view): needed for underutilized candidates, savings and the watchlist
+            projects_t = tuple(MONITORING_PROJECTS)
+            vm_signature = (str(start_day),str(end_day),projects_t,currency)
+            recs = None
+            if st.session_state.get("finops_vm_signature")==vm_signature:
+                vm_data = st.session_state["finops_vm_data"]
+                window_start = datetime.combine(start_day,dtime.min,tzinfo=timezone.utc)
+                window_end = min(datetime.combine(end_day+timedelta(days=1),dtime.min,tzinfo=timezone.utc),datetime.now(timezone.utc))
+                recs_all = build_recommendations(vm_data["inventory"],vm_data["util"],vm_data["costs"],vm_data["catalogs"],window_start,window_end,Params())
+                recs = bl.filter_org(bl.vm_org(recs_all),org) if not recs_all.empty else recs_all
+            try:
+                counts = load_resource_counts(start_day,end_day,*bill_filters)
+            except Exception:
+                counts = None
+
+            scope = [f"{bl.TITLES[d]}: {', '.join(bl.display(d,v) for v in chosen)}" for d,chosen in zip((bl.BU,bl.CLUSTER,bl.APP),org) if chosen]
+            hero_slot.markdown(bl.exec_hero(fmt_money(sm["cost"]),f"Net cloud spend · {start_day:%d %b} – {end_day:%d %b %Y}",
+                                            ("Showing " + "; ".join(scope) + ".") if scope else ""),unsafe_allow_html=True)
+
+            down = recs[recs["status"].isin(lead.DOWNSIZE)] if recs is not None else None
+            sched = bl.schedule_saving(billing,start_day,end_day)
+            cards = [bl.exec_kpi("Total cloud spend",fmt_money(sm["cost"]),
+                                 (bl.change_span(sm["delta"],sm["delta_pct"],fmt_money," vs previous period") if has_prev else "Selected period · net of credits"),
+                                 {"INR":"₹","USD":"$","EUR":"€","GBP":"£"}.get(cur_label,"¤"))]
+            if counts:
+                cards.append(bl.exec_kpi("Resources inventoried",f"{counts['resources']:,}",f"Billed resources across {counts['projects']} GCP projects · excl. jobs","▦","#6250d6"))
+            else:
+                cards.append(bl.exec_kpi("Resources inventoried","—","Resource count unavailable","▦","#6250d6"))
+            if down is not None:
+                cards.append(bl.exec_kpi("Underutilized candidates",f"{len(down):,}",f"of {len(recs):,} running VMs · requires owner validation","⌁","#eb6834"))
+                cards.append(bl.exec_kpi("Potential monthly savings",fmt_money(down["monthly_saving"].sum(skipna=True)),
+                                         "VM rightsizing estimate, not realized" + (f" · +{fmt_money(sched)} from non-prod schedules" if sched>0 else ""),
+                                         "↘","#0ca30c","#0a7d0a"))
+            else:
+                cards.append(bl.exec_kpi("Underutilized candidates","—","Load VM utilization to evaluate","⌁","#eb6834"))
+                cards.append(bl.exec_kpi("Potential monthly savings",fmt_money(sched) if sched>0 else "—",
+                                         "Non-prod schedules only · load VM utilization for rightsizing","↘","#0ca30c","#0a7d0a"))
+            if counts and counts["resources"]:
+                cards.append(bl.exec_kpi("Optimization coverage",f"{counts['mapped']/counts['resources']:.0%}",
+                                         f"Resources with BU / product mapping · {sm['assigned_pct']:.0%} of spend","✓","#1baf7a"))
+            else:
+                cards.append(bl.exec_kpi("Optimization coverage",f"{sm['assigned_pct']:.0%}","Spend with BU / product mapping","✓","#1baf7a"))
+            st.markdown(bl.exec_kpis(cards),unsafe_allow_html=True)
+            if recs is None:
+                note,load_col = st.columns([4,1])
+                note.info(f"Underutilized candidates, rightsizing savings and the watchlist need VM CPU/RAM history (project(s): {', '.join(projects_t)}). "
+                          "Loading it once also serves the **CPU & RAM** view.")
+                if load_col.button("Load VM utilization",type="primary",key="exec_vm_load",use_container_width=True):
+                    load_vm_bundle(projects_t,start_day,end_day,currency)
+                    st.rerun()
+
+            row_h = 380
+            t_col,d_col = st.columns([1.45,1])
+            with t_col:
+                st.plotly_chart(bl.period_trend(daily_all,start_day,end_day,fmt_money,row_h),use_container_width=True,key="exec_trend",
+                                config={"displayModeBar":False})
+            with d_col:
+                pie_card(billing,bl.BU,"exec_bu_donut",pills=False,color_map=colors,height=row_h,title="Spend by business unit",
+                         subtitle="Share of total selected spend · click a slice to open the unit")
+
+            panel_h = 330
+            b_col,o_col,w_col = st.columns(3)
+            b_col.markdown(bl.html_card("Spend by business unit","Net cost per unit · change vs the previous period",
+                                        bl.bu_bars_html(score,colors,fmt_money),panel_h),unsafe_allow_html=True)
+            o_col.markdown(bl.html_card("Top optimization opportunities","Estimated monthly savings by action",
+                                        bl.opportunities_html(bl.opportunities(recs,billing,start_day,end_day),fmt_money,recs is not None),panel_h),
+                           unsafe_allow_html=True)
+            w_col.markdown(bl.html_card("Underutilized resource watchlist","VM findings requiring engineering review",
+                                        bl.watchlist_html(recs,fmt_money),panel_h),unsafe_allow_html=True)
+
+            if bu_options:
+                sel_col,_spacer = st.columns([1.45,1])
+                focus = sel_col.selectbox("Product cost view for",bu_options,key="bu_focus",format_func=bl.bu_name)
+                vm_savings = (down[down[bl.BU]==focus].groupby(bl.APP)["monthly_saving"].sum().to_dict() if down is not None else None)
+                p_col,a_col = st.columns([1.45,1])
+                p_col.markdown(bl.html_card(f"{bl.bu_name(focus)} · product cost view",
+                                            "Business unit → feature cluster → product · potential = VM rightsizing savings per month",
+                                            bl.product_table_html(billing,focus,vm_savings,fmt_money),row_h),unsafe_allow_html=True)
+                with a_col:
+                    st.markdown(bl.html_card("Recommended leadership actions","Move from opportunity to verified savings",bl.actions_html(found),row_h),
+                                unsafe_allow_html=True)
+                    if found:
+                        st.pills("Open action",list(range(1,min(len(found),5)+1)),selection_mode="single",key="exec_act_pick",
+                                 format_func=lambda n: f"#{n}",on_change=on_action_pick)
+
+            st.markdown(bl.section("Explore further","drill into a unit, what changed and how well spend is mapped"),unsafe_allow_html=True)
+            t_dive,t_mix,t_score,t_change,t_matrix,t_health = st.tabs(["🔎 Business unit deep dive","🍩 Spend breakdown","📋 Scorecard",
+                                                                        "📉 What changed","🧩 BU × dimension","🩺 Mapping health"])
+            with t_dive:
+                if not bu_options:
+                    st.info("No business unit spend in this selection.")
+                else:
+                    focus = st.session_state["bu_focus"]
+                    r = score[score["value"]==focus].iloc[0]
+                    rows = bl.select_rows(billing,bl.BU,focus)
+                    color = colors.get(focus,bl.BASE_COLOR)
+                    head_col,open_col = st.columns([3,1])
+                    head_col.caption(f"Showing **{bl.bu_name(focus)}** · change the unit in **Product cost view for** above."
+                                     + (" Applications in the BU billing plan: " + ", ".join(bl.MAPPING["apps_by_bu"][focus]) if focus in bl.MAPPING["apps_by_bu"] else ""))
+                    if open_col.button("Open full details →",key="bu_focus_open",use_container_width=True):
+                        st.session_state["bill_open"] = (bl.BU,focus)
+                    st.markdown(bl.focus_story(r,rows,sm["bu_count"],fmt_money),unsafe_allow_html=True)
+                    c1,c2,c3,c4 = st.columns(4)
+                    c1.markdown(vc.kpi_card("Net cost",fmt_money(r["cost"]),f"{r['share']:.0%} of total spend",color),unsafe_allow_html=True)
+                    c2.markdown(vc.kpi_card("vs previous period",bl.arrow_text(r["delta"],r["delta_pct"],fmt_money) if r["prev"]>0 else "new",
+                                            f"was {fmt_money(r['prev'])}","#EF4444" if r["delta"]>0 else "#10B981"),unsafe_allow_html=True)
+                    c3.markdown(vc.kpi_card("Run rate / 30 days",fmt_money(r["run_rate"]),f"{fmt_money(r['run_rate']/30)} per day","#6250d6"),unsafe_allow_html=True)
+                    c4.markdown(vc.kpi_card("Non-production",f"{r['nonprod_pct']:.0%}" if pd.notna(r["nonprod_pct"]) else "n/a",
+                                            f"{r['owner_pct']:.0%} of spend has an owner" if pd.notna(r["owner_pct"]) else "","#eb6834"),unsafe_allow_html=True)
+                    f1,f2 = st.columns(2)
+                    with f1:
+                        fig = bl.focus_trend(daily_all,focus,start_day,end_day,color)
+                        if fig is not None:
+                            st.plotly_chart(fig,use_container_width=True,key="bu_focus_trend",config={"displayModeBar":False})
+                    with f2:
+                        fig,_lookup = bl.bridge(rows,bl.APP,fmt_money,n=6,title="What drove the change",
+                                                subtitle="Previous → selected period, by product · red = more spend, green = less.",clickable=False)
+                        if fig is None:
+                            st.info("No previous-period spend to compare with.")
+                        else:
+                            st.plotly_chart(fig,use_container_width=True,key="bu_focus_bridge",config={"displayModeBar":False})
+                    for pair in (bl.FOCUS_DIMS[:2],bl.FOCUS_DIMS[2:]):
+                        for holder,dim in zip(st.columns(2),pair):
+                            with holder:
+                                pie_card(rows,dim,f"bu_focus_{dim}",clickable=False,title=f"{bl.bu_name(focus)} · by {bl.TITLES[dim].lower()}",
+                                         subtitle="Share of this unit's net cost.")
+            with t_mix:
+                m1,m2 = st.columns(2)
+                with m1:
+                    pie_card(billing,bl.CLUSTER,"pie_cluster")
+                with m2:
+                    pie_card(billing,bl.APP,"pie_app",title="Spend by product")
+                s1,s2 = st.columns([1,1.25])
+                with s1:
+                    fig = bl.bu_sunburst(billing,colors,fmt_money)
+                    if fig is not None:
+                        st.plotly_chart(fig,use_container_width=True,key="bu_sunburst",config={"displayModeBar":False})
+                with s2:
+                    fig = bl.bu_trend(daily_all,score,colors,start_day,end_day,fmt_money)
+                    if fig is not None:
+                        st.plotly_chart(fig,use_container_width=True,key="bu_trend",config={"displayModeBar":False})
+            with t_score:
+                st.caption("Pick a row to show that unit in the product cost view and the deep dive.")
+                table = score.assign(name=score["value"].map(bl.bu_name),share=score["share"]*100,delta_pct=score["delta_pct"]*100,
+                                     nonprod_pct=score["nonprod_pct"]*100,owner_pct=score["owner_pct"]*100)
+                st.dataframe(table[["name","signal","cost","share","delta","delta_pct","run_rate","trend","apps","top_app","top_service","nonprod_pct","owner_pct"]],
+                             use_container_width=True,hide_index=True,key="bu_table",on_select=on_table_pick,selection_mode="single-row",
+                             column_config={
+                                 "name":"Business unit","signal":"Signal",
+                                 "cost":st.column_config.NumberColumn("Net cost",format="%.0f"),
+                                 "share":st.column_config.ProgressColumn("Share of spend",format="%.0f%%",min_value=0,max_value=100),
+                                 "delta":st.column_config.NumberColumn("Change",format="%+.0f"),
+                                 "delta_pct":st.column_config.NumberColumn("Change %",format="%+.0f%%"),
+                                 "run_rate":st.column_config.NumberColumn("Run rate / 30d",format="%.0f"),
+                                 "trend":st.column_config.LineChartColumn("Daily trend",y_min=0),
+                                 "apps":st.column_config.NumberColumn("Products",format="%d"),
+                                 "top_app":"Top product","top_service":"Top service",
+                                 "nonprod_pct":st.column_config.ProgressColumn("Non-prod",format="%.0f%%",min_value=0,max_value=100),
+                                 "owner_pct":st.column_config.ProgressColumn("Has owner",format="%.0f%%",min_value=0,max_value=100)})
+            with t_change:
+                if not has_prev:
+                    st.info("No billing data was found for the previous period, so changes cannot be shown.")
+                else:
+                    mover_dim = st.radio("Break the change down by",bl.ALL_DIMS,format_func=lambda d: bl.TITLES[d],horizontal=True,key="bill_mover_dim")
+                    fig,lookup = bl.bridge(billing,mover_dim,fmt_money)
+                    if fig is None:
+                        st.info("Nothing changed for this view.")
+                    else:
+                        st.plotly_chart(fig,use_container_width=True,key="bill_chart_bridge",on_select=on_chart_click("bill_chart_bridge",lookup,mover_dim),
+                                        selection_mode="points",config={"displayModeBar":False})
+            with t_matrix:
+                matrix_dim = st.radio("Compare business units by",bl.MATRIX_DIMS,format_func=lambda d: bl.TITLES[d],horizontal=True,key="bu_matrix_dim")
+                fig = bl.bu_matrix(billing,matrix_dim,fmt_money)
+                if fig is not None:
+                    st.plotly_chart(fig,use_container_width=True,key="bu_matrix",config={"displayModeBar":False})
+            with t_health:
+                h1,h2 = st.columns(2)
+                with h1:
+                    fig,lookup = bl.coverage_bars(billing)
+                    if fig is not None:
+                        st.plotly_chart(fig,use_container_width=True,key="bu_coverage",on_select=on_coverage_click("bu_coverage",lookup),
+                                        selection_mode="points",config={"displayModeBar":False})
+                with h2:
+                    fig = bl.tagging_trend(daily_all,end_day)
+                    if fig is not None:
+                        st.plotly_chart(fig,use_container_width=True,key="bu_tag_trend",config={"displayModeBar":False})
+                unmapped = bl.unmapped_features(billing)
+                if len(unmapped):
+                    st.markdown(f"**{len(unmapped)} feature(s) outside the BU billing plan · {fmt_money(sm['unmapped'])}**")
+                    st.caption("Add each feature (lower case) to the right business unit and product in `bu_mapping.json`, then click **↻ Refresh billing data**.")
+                    st.dataframe(unmapped.assign(share=unmapped["share"]*100)[["value","cluster","cost","prev","delta","share"]],
+                                 use_container_width=True,hide_index=True,column_config={
+                                     "value":"Feature label","cluster":"Feature cluster",
+                                     "cost":st.column_config.NumberColumn("Net cost",format="%.0f"),
+                                     "prev":st.column_config.NumberColumn("Previous period",format="%.0f"),
+                                     "delta":st.column_config.NumberColumn("Change",format="%+.0f"),
+                                     "share":st.column_config.ProgressColumn("Share of total",format="%.1f%%",min_value=0,max_value=100)})
+
+            bill_opened = st.session_state.pop("bill_open",None)
+            if bill_opened:
+                open_dim,open_value = bill_opened
+                open_title,_open_sub = bl.describe(open_dim,open_value)
+
+                @st.dialog(open_title,width="large")
+                def show_bill_details():
+                    render_bill_details(open_dim,open_value,billing,bill_filters,fmt_money,start_day,end_day)
+                show_bill_details()
+    with tab_vm:
+        st.markdown("<div class='sec-title'>Leadership view · Cloud efficiency</div>"
+                    "<div class='sec-sub'>Where VM spend can be reduced, who owns it and how healthy the fleet is. "
+                    "<b>Click any bar to open the details.</b></div>",unsafe_allow_html=True)
+        projects_t = tuple(MONITORING_PROJECTS)
+        lead_signature = (str(start_day),str(end_day),projects_t,currency)
+        if st.button("Load leadership data",type="primary",key="lead_load"):
+            load_vm_bundle(projects_t,start_day,end_day,currency)
+        if st.session_state.get("finops_vm_signature")!=lead_signature:
+            st.info("Click **Load leadership data**. It reads the VM list, CPU/RAM history and billed cost for the sidebar dates "
+                    "(the same data as the **CPU & RAM** view, so loading it once serves both).")
+        else:
+            vm_data = st.session_state["finops_vm_data"]
+            window_start = datetime.combine(start_day,dtime.min,tzinfo=timezone.utc)
+            window_end = min(datetime.combine(end_day+timedelta(days=1),dtime.min,tzinfo=timezone.utc),datetime.now(timezone.utc))
+            recs = build_recommendations(vm_data["inventory"],vm_data["util"],vm_data["costs"],vm_data["catalogs"],window_start,window_end,Params())
+            if vm_data["errors"]:
+                with st.expander(f"⚠️ {len(vm_data['errors'])} request(s) failed",expanded=False):
+                    for message in vm_data["errors"]:
+                        st.code(message)
+            if recs.empty:
+                st.warning("No running VMs were found for the configured project(s).")
+            else:
+                vm_cur = vm_data["costs"]["currency"].iloc[0] if not vm_data["costs"].empty else cur_label
+                fmt_money = lambda v: money(v,vm_cur)
+                sm = lead.summary(recs)
+                st.caption(f"Running VMs in {', '.join(MONITORING_PROJECTS)} · {start_day:%d %b %Y} to {end_day:%d %b %Y} · default sizing assumptions "
+                           "(CPU 60% / RAM 70% at the p95 hourly peak). Change them in the **CPU & RAM** view for a technical deep dive.")
+                cards = [
+                    ("Est. monthly savings",fmt_money(sm["savings"]),f"≈ {fmt_money(sm['yearly'])} a year","#10B981",
+                     f"Downsizing idle and over-provisioned VMs. vCPUs {sm['vcpu_now']:,.0f} → {sm['vcpu_rec']:,.0f}."),
+                    ("Savings potential",f"{sm['savings_pct']:.0%}",f"of {fmt_money(sm['base_cost'])} monthly VM compute","#F59E0B","Share of VM compute cost that could be saved."),
+                    ("VMs to downsize",f"{sm['down']:,}",f"{sm['idle']} idle · {sm['over']} over-provisioned","#8B5CF6","Idle and over-provisioned VMs."),
+                    ("VMs running hot",f"{sm['up']:,}",f"+{fmt_money(sm['extra'])} a month to fix","#EF4444","VMs that need more CPU or RAM."),
+                    ("Fleet right-sized",f"{sm['right_pct']:.0%}",f"{sm['right']} of {sm['evaluated']} evaluated VMs","#3B82F6","Share of evaluated VMs whose size fits."),
+                    ("Owner label coverage",f"{sm['owner_pct']:.0%}",f"{sm['no_owner']} VMs have no owner","#06B6D4","VMs carrying an owner label."),
+                ]
+                for holder,(label,value,sub,accent,tip) in zip(st.columns(6),cards):
+                    holder.markdown(vc.kpi_card(label,value,sub,accent,tip),unsafe_allow_html=True)
+                st.write("")
+
+                def on_chart_click(chart_key,lookup,kind):
+                    """Callback: remember which bar was clicked; the details pop-up opens on the rerun."""
+                    def _cb():
+                        state = st.session_state.get(chart_key)
+                        points = state["selection"]["points"] if state else []
+                        value = lead.resolve_click(points,lookup)
+                        if value is not None:
+                            st.session_state["lead_open"] = (kind,value)
+                    return _cb
+
+                def clickable(fig,lookup,chart_key,kind):
+                    st.plotly_chart(fig,use_container_width=True,key=chart_key,on_select=on_chart_click(chart_key,lookup,kind),selection_mode="points",
+                                    config={"displayModeBar":False})
+
+                row1a,row1b = st.columns(2)
+                with row1a:
+                    fig,lookup = lead.health_bars(recs,fmt_money)
+                    clickable(fig,lookup,"lead_chart_health","status")
+                with row1b:
+                    fig,lookup = lead.savings_by_group(recs,"client",fmt_money)
+                    if fig is None:
+                        st.info("No downsizing savings to show by client.")
+                    else:
+                        clickable(fig,lookup,"lead_chart_client","client")
+                row2a,row2b = st.columns(2)
+                with row2a:
+                    fig,lookup = lead.savings_by_group(recs,"owner",fmt_money)
+                    if fig is None:
+                        st.info("No downsizing savings to show by owner.")
+                    else:
+                        clickable(fig,lookup,"lead_chart_owner","owner")
+                with row2b:
+                    fig,lookup = lead.savings_by_group(recs,"environment",fmt_money)
+                    if fig is None:
+                        st.info("No downsizing savings to show by environment.")
+                    else:
+                        clickable(fig,lookup,"lead_chart_env","environment")
+                row3a,row3b = st.columns(2)
+                with row3a:
+                    fig,lookup = lead.top_vm_savings(recs,fmt_money)
+                    if fig is None:
+                        st.info("No VM savings to show.")
+                    else:
+                        clickable(fig,lookup,"lead_chart_vms","vm")
+                with row3b:
+                    fig,lookup = lead.label_coverage(recs)
+                    clickable(fig,lookup,"lead_chart_labels","unlabeled")
+
+                with st.expander("Prefer a list? Open details without clicking",expanded=False):
+                    kinds = {"Status":"status","Client":"client","Owner":"owner","Environment":"environment","Department":"department","Application":"application","A single VM":"vm"}
+                    pick_label = st.selectbox("What do you want to look at?",list(kinds),key="lead_pick_kind")
+                    pick_kind = kinds[pick_label]
+                    if pick_kind=="vm":
+                        vm_names = recs.sort_values("monthly_saving",ascending=False,na_position="last").set_index("instance_id")["instance_name"].to_dict()
+                        pick_value = st.selectbox("VM",list(vm_names),format_func=lambda i: vm_names[i],key="lead_pick_vm")
+                    elif pick_kind=="status":
+                        pick_value = st.selectbox("Status",[s for s in STATUS_ORDER if s in set(recs["status"])],key="lead_pick_status")
+                    else:
+                        pick_value = st.selectbox(pick_label,sorted(recs[pick_kind].unique(),key=lambda v:(v==NOT_LABELED,str(v).lower())),key=f"lead_pick_{pick_kind}")
+                    if st.button("Open details",key="lead_pick_open"):
+                        st.session_state["lead_open"] = (pick_kind,pick_value)
+                        st.rerun()
+
+                opened = st.session_state.pop("lead_open",None)
+                if opened:
+                    open_kind,open_value = opened
+                    open_rows = lead.select_rows(recs,open_kind,open_value)
+                    open_title,open_sub = lead.describe(open_kind,open_value,recs)
+
+                    @st.dialog(open_title,width="large")
+                    def show_lead_details():
+                        render_lead_details(open_rows,open_kind,open_value,open_sub,vm_data,fmt_money)
+                    show_lead_details()
+
 elif view=="📈 CPU & RAM":
     STATUS_COLORS = {"Idle":"#7f8fa9","Over-provisioned":"#e09a37","Right-sized":"#168c86","Under-provisioned":"#d64545",
                      "Insufficient data":"#b7bfce","Not evaluated":"#d5dbe6"}
@@ -569,24 +1307,7 @@ elif view=="📈 CPU & RAM":
     projects_t = tuple(MONITORING_PROJECTS)
     vm_signature = (str(start_day),str(end_day),projects_t,currency)
     if st.button("Load VM utilization & right-sizing",type="primary"):
-        try:
-            with st.spinner("Loading VM inventory, utilization and billing cost…"):
-                inventory,inv_errors = load_vm_inventory(projects_t)
-                util,util_errors = load_vm_metrics(projects_t,start_day,end_day)
-                zones = tuple(sorted(inventory.loc[inventory["status"]=="RUNNING","zone"].unique()))
-                catalogs,cat_errors = load_machine_type_catalog(projects_t[0],zones) if zones else ({},[])
-                cost_errors = []
-                try:
-                    vm_costs = load_vm_costs(projects_t,start_day,end_day,currency)
-                except Exception as exc:
-                    vm_costs = pd.DataFrame(columns=["instance_id","currency","net_cost"])
-                    cost_errors.append(f"billing cost lookup failed: {str(exc).splitlines()[0][:200]}")
-            st.session_state["finops_vm_data"] = dict(inventory=inventory,util=util,catalogs=catalogs,costs=vm_costs,
-                                                      errors=list(dict.fromkeys(inv_errors+util_errors+cat_errors+cost_errors)))
-            st.session_state["finops_vm_signature"] = vm_signature
-        except Exception as exc:
-            st.error("Unable to load VM data.")
-            st.code(str(exc))
+        load_vm_bundle(projects_t,start_day,end_day,currency)
     if st.session_state.get("finops_vm_signature")!=vm_signature:
         st.info("Click **Load VM utilization & right-sizing**. It reads the VM list, hourly CPU/RAM metrics and billed cost for the selected dates.")
     else:
