@@ -1,5 +1,10 @@
-"""GCP FinOps dashboard: cached summary view and on-demand resource details."""
-from datetime import date, timedelta
+"""GCP FinOps dashboard: cached summary view, leadership view and on-demand resource / VM details."""
+from concurrent.futures import ThreadPoolExecutor
+from datetime import date, datetime, time as dtime, timedelta, timezone
+import base64
+from contextlib import contextmanager
+import html
+import json
 import os
 import pathlib
 import pandas as pd
@@ -7,14 +12,25 @@ import plotly.express as px
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 import streamlit as st
-from google.cloud import bigquery
+from google.auth.transport.requests import AuthorizedSession
+from google.cloud import bigquery, monitoring_v3
+from google.oauth2 import service_account
 
-st.set_page_config(page_title="GCP FinOps | Cost Intelligence", page_icon="💠", layout="wide")
+from rightsizing import (LABEL_COLUMNS, LABEL_FIELDS, NOT_LABELED, Params, STATUS_ORDER,
+                         build_recommendations, extract_labels, labels_text)
+import billing_leadership as bl
+import leadership as lead
+import vm_charts as vc
+
+st.set_page_config(
+    page_title="GCP FinOps | Cost Intelligence",
+    page_icon="💠",
+    layout="wide",
+    initial_sidebar_state="expanded",
+)
 PROJECT_ID = os.getenv("GOOGLE_CLOUD_PROJECT", "iks-finops")
 TABLE_ID = os.getenv("GCP_BILLING_TABLE", "iks-finops.GCP_Finops_billing.gcp_billing_export_resource_v1_019EFB_4492BC_7B3DE6")
 CACHE_TTL = int(os.getenv("FINOPS_CACHE_TTL", "300"))
-<<<<<<< HEAD
-=======
 # Every dashboard reports in USD. The billing export holds amounts in the billing currency (INR) plus
 # currency_conversion_rate (= billing-currency units per 1 USD), so each amount is divided by that rate.
 REPORT_CURRENCY = "USD"
@@ -31,21 +47,379 @@ FEATURE_MAP_TABLE = os.getenv("GCP_FEATURE_MAP_TABLE", "iks-finops.Monthly_Repor
 # Optional CSV (project_id,owner,team) used to assign an owner to spend that has no "owner" label. See owner_map.example.csv.
 OWNER_MAP_FILE = os.getenv("FINOPS_OWNER_MAP", os.path.join(os.path.dirname(os.path.abspath(__file__)), "owner_map.csv"))
 NO_ORG = ((), (), ())   # (business units, feature clusters, applications) chosen in the "View by" row; empty = all
->>>>>>> pranay1
 
+# ─── Logo (base64-encode once) ────────────────────────────────────────────────
+_LOGO_PATH = pathlib.Path(__file__).parent / "iks_logo.png"
+if _LOGO_PATH.exists():
+    _LOGO_B64 = base64.b64encode(_LOGO_PATH.read_bytes()).decode()
+    _LOGO_SRC = f"data:image/png;base64,{_LOGO_B64}"
+else:
+    _LOGO_SRC = ""
+
+# ─── Design tokens ───────────────────────────────────────────────────────────
+INK = "#0F1B3D"
+MUTED = "#64748B"
+PRIMARY = "#2563EB"
+BORDER = "#E6ECF5"
+# Donut / ranking palette (matches the reference SaaS theme)
+DONUT_PALETTE = ["#3B82F6", "#93C5FD", "#8B5CF6", "#34D399", "#FBBF24", "#F97316"]
+OTHERS_COLOR = "#CBD5E1"
+UNLABELED_COLOR = "#94A3B8"
+CHART_PALETTE = ["#2563EB", "#A9C8F7", "#8B5CF6", "#34D399", "#FBBF24", "#F97316"]
+# Uniform size of the two donut cards (Cost by Service / Credits by Service):
+# 1.0 = original, 0.8 = a little smaller, 0.7 = compact. Scales chart, text, legend and card padding together.
+DONUT_K = 0.8
+
+# ─── Inline SVG icons for KPI cards ──────────────────────────────────────────
+def _icon(inner, color):
+    return (f'<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="{color}" stroke-width="2" '
+            f'stroke-linecap="round" stroke-linejoin="round">{inner}</svg>')
+
+
+SVG_NET_COST = _icon('<path d="M20 12V8H6a2 2 0 0 1 0-4h12v4"/><path d="M4 6v12a2 2 0 0 0 2 2h14v-4"/><path d="M18 12a2 2 0 0 0 0 4h4v-4Z"/>', "#2563EB")
+SVG_GROSS_COST = _icon('<polyline points="3 17 9 11 13 15 21 7"/><polyline points="15 7 21 7 21 13"/>', "#7C3AED")
+SVG_CREDITS = _icon('<rect x="3" y="8" width="18" height="13" rx="2"/><path d="M12 8v13"/><path d="M3 12h18"/><path d="M12 8c-2.5 0-4-1-4-2.5S9.5 3 11 3c1.5 0 1 2.5 1 5Zm0 0c2.5 0 4-1 4-2.5S14.5 3 13 3c-1.5 0-1 2.5-1 5Z"/>', "#16A34A")
+SVG_ROWS = _icon('<line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/>', "#3B82F6")
+SVG_SERVICES = _icon('<path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/><polyline points="3.27 6.96 12 12.01 20.73 6.96"/><line x1="12" y1="22.08" x2="12" y2="12"/>', "#F59E0B")
+
+
+SVG_ALERT = _icon('<path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/>', "#EF4444")
+SVG_CHECK = _icon('<path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/>', "#16A34A")
+SVG_USERS = _icon('<path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/>', "#0891B2")
+SVG_SERVER = _icon('<rect x="2" y="3" width="20" height="8" rx="2"/><rect x="2" y="13" width="20" height="8" rx="2"/><line x1="6" y1="7" x2="6.01" y2="7"/><line x1="6" y1="17" x2="6.01" y2="17"/>', "#8B5CF6")
+
+NAV_ITEMS = ["Overview", "Leadership", "CPU & RAM", "Cost breakdowns", "Resource explorer", "Data & export"]
+PERIODS = {"Last 7 days": 7, "Last 30 days": 30, "Last 60 days": 60, "Last 90 days": 90, "Last 180 days": 180}
+
+# ─── CSS — Global design system ──────────────────────────────────────────────
 st.markdown("""
 <style>
-.stApp{background:#f5f7fb}
-[data-testid="stHeader"]{background:rgba(245,247,251,.92)}
-.block-container{padding-top:1.2rem;padding-bottom:2rem;max-width:1700px}
-[data-testid="stMetric"]{background:#fff;border:1px solid #e6eaf2;padding:16px 18px;border-radius:14px;box-shadow:0 2px 8px rgba(18,38,63,.035)}
-[data-testid="stMetricLabel"]{color:#65718a}
-[data-testid="stMetricValue"]{color:#152238}
-.hero{padding:24px 26px;border-radius:18px;color:white;background:linear-gradient(115deg,#101d3b 0%,#183d68 55%,#187c91 100%);margin-bottom:18px}
-.hero h1{margin:0;font-size:2rem;letter-spacing:-.03em}
-.hero p{margin:7px 0 0;color:#d8e8f7;font-size:.98rem}
-.muted{color:#68758b;font-size:.86rem}
-.section-head{font-size:1.12rem;font-weight:750;color:#17243b;margin:5px 0 10px}
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap');
+
+
+/* ── Hide Streamlit chrome ── */
+#MainMenu, footer, [data-testid="stToolbar"], [data-testid="stDecoration"] {display: none !important; visibility: hidden;}
+[data-testid="stHeader"] {background: transparent !important;}
+
+/* ── Global type + canvas ── */
+.stApp, .stApp :not([data-testid="stIconMaterial"]):not(code):not(pre) {
+    font-family: 'Inter', system-ui, -apple-system, 'Segoe UI', sans-serif;
+}
+.stApp {
+    background:
+        radial-gradient(1200px 500px at 85% -10%, rgba(59,130,246,.08), transparent 60%),
+        linear-gradient(180deg, #F6F9FE 0%, #EFF4FB 100%);
+    color: #0F1B3D;
+}
+.block-container {
+    padding: 1.6rem 2rem 2.5rem 2rem;
+    max-width: 1640px;
+}
+h1, h2, h3, h4 {color: #0F1B3D; letter-spacing: -0.01em;}
+
+/* ── Sidebar (app navigation) ── */
+section[data-testid="stSidebar"] {
+    background: #FFFFFF;
+    border-right: 1px solid #E6ECF5;
+}
+section[data-testid="stSidebar"][aria-expanded="true"] {
+    min-width: 252px !important;
+    width: 252px !important;
+    max-width: 252px !important;
+}
+[data-testid="stSidebarHeader"] {height: 1.2rem; padding: 0;}
+[data-testid="stSidebarUserContent"] {padding: 0 1rem 1rem 1rem;}
+.side-brand {
+    display: flex;
+    justify-content: center;   /* centers the logo horizontally */
+    padding: 6px 8px 22px 8px;
+}
+.side-brand-logo {height: 44px; overflow: hidden;}
+.side-brand-logo img {width: 96px; height: auto; display: block;}
+.side-brand-sep {width: 1px; height: 22px; background: #E2E8F0;}
+.side-brand-name {font-size: 15px; font-weight: 600; color: #0F1B3D; letter-spacing: -0.01em;}
+.side-section {
+    font-size: 11px; font-weight: 600; letter-spacing: .08em; text-transform: uppercase;
+    color: #94A3B8; padding: 0 12px 8px 12px;
+}
+
+/* Radio group → nav list */
+section[data-testid="stSidebar"] div[role="radiogroup"] {gap: 4px; flex-direction: column;}
+section[data-testid="stSidebar"] div[role="radiogroup"] > label {
+    display: flex; align-items: center; gap: 12px;
+    width: 100%; margin: 0; padding: 11px 14px;
+    border-radius: 12px; cursor: pointer;
+    transition: background .15s ease, color .15s ease;
+}
+section[data-testid="stSidebar"] div[role="radiogroup"] > label > div:first-of-type {display: none !important;}
+section[data-testid="stSidebar"] div[role="radiogroup"] > label p {
+    font-size: 14px; font-weight: 500; color: #475569; margin: 0;
+}
+section[data-testid="stSidebar"] div[role="radiogroup"] > label::before {
+    content: ""; width: 18px; height: 18px; flex: 0 0 18px;
+    background-color: #64748B;
+    -webkit-mask-repeat: no-repeat; mask-repeat: no-repeat;
+    -webkit-mask-position: center; mask-position: center;
+    -webkit-mask-size: contain; mask-size: contain;
+}
+section[data-testid="stSidebar"] div[role="radiogroup"] > label:hover {background: #F3F6FB;}
+section[data-testid="stSidebar"] div[role="radiogroup"] > label:has(input:checked) {background: #EAF1FE;}
+section[data-testid="stSidebar"] div[role="radiogroup"] > label:has(input:checked) p {color: #2563EB; font-weight: 600;}
+section[data-testid="stSidebar"] div[role="radiogroup"] > label:has(input:checked)::before {background-color: #2563EB;}
+section[data-testid="stSidebar"] div[role="radiogroup"] > label:nth-of-type(1)::before {
+    -webkit-mask-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><rect x='3' y='3' width='7' height='7' rx='1.5'/><rect x='14' y='3' width='7' height='7' rx='1.5'/><rect x='3' y='14' width='7' height='7' rx='1.5'/><rect x='14' y='14' width='7' height='7' rx='1.5'/></svg>");
+    mask-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><rect x='3' y='3' width='7' height='7' rx='1.5'/><rect x='14' y='3' width='7' height='7' rx='1.5'/><rect x='3' y='14' width='7' height='7' rx='1.5'/><rect x='14' y='14' width='7' height='7' rx='1.5'/></svg>");
+}
+section[data-testid="stSidebar"] div[role="radiogroup"] > label:nth-of-type(3)::before {
+    -webkit-mask-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><circle cx='11' cy='11' r='7'/><line x1='21' y1='21' x2='16.5' y2='16.5'/></svg>");
+    mask-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><circle cx='11' cy='11' r='7'/><line x1='21' y1='21' x2='16.5' y2='16.5'/></svg>");
+}
+section[data-testid="stSidebar"] div[role="radiogroup"] > label:nth-of-type(4)::before {
+    -webkit-mask-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><path d='M21.21 15.89A10 10 0 1 1 8 2.83'/><path d='M22 12A10 10 0 0 0 12 2v10z'/></svg>");
+    mask-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><path d='M21.21 15.89A10 10 0 1 1 8 2.83'/><path d='M22 12A10 10 0 0 0 12 2v10z'/></svg>");
+}
+section[data-testid="stSidebar"] div[role="radiogroup"] > label:nth-of-type(5)::before {
+    -webkit-mask-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><rect x='5' y='5' width='14' height='14' rx='2'/><rect x='9' y='9' width='6' height='6'/><path d='M9 2v3M15 2v3M9 19v3M15 19v3M2 9h3M2 15h3M19 9h3M19 15h3'/></svg>");
+    mask-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><rect x='5' y='5' width='14' height='14' rx='2'/><rect x='9' y='9' width='6' height='6'/><path d='M9 2v3M15 2v3M9 19v3M15 19v3M2 9h3M2 15h3M19 9h3M19 15h3'/></svg>");
+}
+section[data-testid="stSidebar"] div[role="radiogroup"] > label:nth-of-type(6)::before {
+    -webkit-mask-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><path d='M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4'/><polyline points='7 10 12 15 17 10'/><line x1='12' y1='15' x2='12' y2='3'/></svg>");
+    mask-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><path d='M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4'/><polyline points='7 10 12 15 17 10'/><line x1='12' y1='15' x2='12' y2='3'/></svg>");
+}
+
+section[data-testid="stSidebar"] div[role="radiogroup"] > label:nth-of-type(2)::before {
+    -webkit-mask-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><rect x='2' y='7' width='20' height='14' rx='2'/><path d='M16 7V5a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v2'/><path d='M2 13h20'/></svg>");
+    mask-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><rect x='2' y='7' width='20' height='14' rx='2'/><path d='M16 7V5a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v2'/><path d='M2 13h20'/></svg>");
+}
+
+/* Powered-by card pinned to the bottom of the sidebar */
+.side-powered {
+    position: fixed; bottom: 18px; left: 16px; width: 220px;
+    padding: 14px 16px 36px 16px; border-radius: 16px; overflow: hidden;
+    background: linear-gradient(180deg, #F3F7FF 0%, #E6EEFD 100%);
+    border: 1px solid #E1EAFB;
+}
+.side-powered .sp-row {display: flex; align-items: center; gap: 10px;}
+.side-powered .sp-small {font-size: 11px; color: #64748B; line-height: 1.2;}
+.side-powered .sp-big {font-size: 14px; font-weight: 600; color: #0F1B3D; line-height: 1.2;}
+.side-powered .sp-wave {position: absolute; left: 0; right: 0; bottom: 0; height: 34px;}
+
+/* ── Page header ── */
+.page-title {font-size: 26px; font-weight: 700; color: #0F1B3D; line-height: 1.15; letter-spacing: -0.02em;}
+.page-sub {font-size: 10.5px; color: #64748B; margin-top: 4px; font-weight: 500;}
+.status-row {
+    display: flex; justify-content: flex-end; align-items: center; gap: 12px;
+    margin: 2px 2px 14px 2px; font-size: 12px; color: #64748B;
+}
+.status-dot {width: 7px; height: 7px; border-radius: 50%; background: #22C55E; display: inline-block; margin-right: 6px;
+    box-shadow: 0 0 0 3px rgba(34,197,94,.15);}
+.period-pill {
+    background: #EAF1FE; color: #1D4ED8; font-size: 12px; font-weight: 600;
+    padding: 5px 12px; border-radius: 999px;
+}
+
+/* ── Cards (bordered containers with key "card_*") ── */
+[data-testid="stVerticalBlockBorderWrapper"]:has(> div > [class*="st-key-card_"]) {
+    background: #FFFFFF;
+    border: 1px solid #E6ECF5 !important;
+    border-radius: 18px !important;
+    box-shadow: 0 1px 2px rgba(15,27,61,.04), 0 10px 28px rgba(37,99,235,.05);
+    padding: 20px 22px 16px 22px !important;
+}
+.card-head {display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; margin-bottom: 6px;}
+.card-title {font-size: 15px; font-weight: 600; color: #0F1B3D; letter-spacing: -0.005em;}
+.card-desc {font-size: 12.5px; color: #64748B; margin-top: 3px;}
+.card-badge {
+    font-size: 12px; font-weight: 500; color: #475569; background: #FFFFFF;
+    border: 1px solid #E3E9F4; border-radius: 10px; padding: 5px 10px; white-space: nowrap;
+}
+.legend-inline {display: flex; gap: 14px; font-size: 12px; color: #64748B; align-items: center; white-space: nowrap;}
+.legend-inline i {display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 6px;}
+
+/* ── KPI cards ── */
+/* Every size below is "base px × --k", so the whole card (text, icon, svg, padding, height)
+   scales uniformly. Change --k only: 1 = original size, 0.7 = compact, 0.6 = very compact. */
+.kpi-card {
+    --k: 0.7;
+    display: flex; flex-direction: column; gap: calc(10px * var(--k));
+    background: #FFFFFF; border: 1px solid #E6ECF5; border-radius: calc(18px * var(--k));
+    box-shadow: 0 1px 2px rgba(15,27,61,.04), 0 8px 20px rgba(37,99,235,.05);
+    padding: calc(18px * var(--k)) calc(18px * var(--k)) calc(14px * var(--k)) calc(18px * var(--k));
+    min-height: calc(132px * var(--k)); overflow: hidden;
+}
+.kpi-top {display: flex; gap: calc(14px * var(--k)); align-items: center;}
+.kpi-foot {display: flex; align-items: flex-end; justify-content: space-between; gap: calc(8px * var(--k)); margin-top: auto;}
+.kpi-icon {
+    flex: 0 0 calc(44px * var(--k)); width: calc(44px * var(--k)); height: calc(44px * var(--k)); border-radius: calc(12px * var(--k));
+    display: flex; align-items: center; justify-content: center;
+}
+.kpi-icon svg {width: calc(20px * var(--k)); height: calc(20px * var(--k));}
+.kpi-body {min-width: 0; flex: 1;}
+.kpi-label {font-size: calc(12.5px * var(--k)); font-weight: 500; color: #475569; margin-bottom: calc(4px * var(--k)); white-space: nowrap; overflow: hidden; text-overflow: ellipsis;}
+.kpi-value {font-size: calc(24px * var(--k)); font-weight: 700; color: #0F1B3D; line-height: 1.15; letter-spacing: -0.02em; font-variant-numeric: tabular-nums; white-space: nowrap;}
+.kpi-sub {font-size: calc(12px * var(--k)); color: #64748B; font-weight: 500; min-width: 0; line-height: 1.3;
+    display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;}
+.kpi-spark {flex: 0 0 auto; display: block; width: calc(84px * var(--k)); height: auto;}
+
+/* ── Ranked list rows (project / region / SKU) ── */
+.rank-list {display: flex; flex-direction: column; gap: 4px; margin-top: 10px;}
+.rank-row {
+    display: grid; grid-template-columns: minmax(90px, 1.1fr) 1.7fr auto 52px; gap: 14px;
+    align-items: center; padding: 7px 0; font-size: 13px;
+}
+.rank-name {color: #334155; font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;}
+.rank-bar {height: 10px; background: #EEF3FB; border-radius: 999px; overflow: hidden;}
+.rank-bar span {display: block; height: 100%; border-radius: 999px;}
+.rank-val {color: #0F1B3D; font-weight: 600; text-align: right; font-variant-numeric: tabular-nums;}
+.rank-pct {color: #64748B; text-align: right; font-variant-numeric: tabular-nums;}
+
+/* ── Donut legend ── */
+/* --dk (donut scale) is set per donut card below; 1 = original size */
+.dl-list {display: flex; flex-direction: column; gap: calc(11px * var(--dk, 1)); padding-top: calc(14px * var(--dk, 1));}
+.dl-row {display: flex; align-items: center; gap: calc(10px * var(--dk, 1)); font-size: calc(13px * var(--dk, 1));}
+.dl-dot {width: calc(10px * var(--dk, 1)); height: calc(10px * var(--dk, 1)); border-radius: 50%; flex: 0 0 calc(10px * var(--dk, 1));}
+.dl-name {flex: 1; color: #334155; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0;}
+.dl-pct {color: #0F1B3D; font-weight: 600; font-variant-numeric: tabular-nums;}
+
+/* Donut cards ("Cost by Service", "Credits by Service"): everything inside scales uniformly by --dk (see DONUT_K in Python) */
+[data-testid="stVerticalBlockBorderWrapper"]:has(> div > [class*="st-key-card_donut_"]) {
+    --dk: __DK__;
+    padding: calc(20px * var(--dk)) calc(22px * var(--dk)) calc(16px * var(--dk)) calc(22px * var(--dk)) !important;
+    border-radius: calc(18px * var(--dk)) !important;
+}
+[class*="st-key-card_donut_"] {gap: calc(1rem * var(--dk)) !important;}
+[class*="st-key-card_donut_"] [data-testid="stHorizontalBlock"] {gap: calc(1rem * var(--dk)) !important;}
+[class*="st-key-card_donut_"] .card-head {gap: calc(12px * var(--dk)); margin-bottom: calc(6px * var(--dk));}
+[class*="st-key-card_donut_"] .card-title {font-size: calc(15px * var(--dk));}
+[class*="st-key-card_donut_"] .card-desc {font-size: calc(12.5px * var(--dk)); margin-top: calc(3px * var(--dk));}
+[class*="st-key-card_donut_"] .card-badge {
+    font-size: calc(12px * var(--dk)); padding: calc(5px * var(--dk)) calc(10px * var(--dk)); border-radius: calc(10px * var(--dk));
+}
+
+/* ── Inputs / selects / filters ── */
+div[data-baseweb="select"] > div, div[data-baseweb="input"], div[data-baseweb="base-input"] {
+    border-radius: 12px !important;
+}
+div[data-baseweb="select"] > div {
+    min-height: 42px; background: #FFFFFF !important;
+    border: 1px solid #E3E9F4 !important;
+    box-shadow: 0 1px 2px rgba(15,27,61,.04);
+    font-size: 13px;
+}
+div[data-baseweb="select"] > div:focus-within, div[data-baseweb="input"]:focus-within {
+    border-color: #2563EB !important; box-shadow: 0 0 0 3px rgba(37,99,235,.12) !important;
+}
+div[data-baseweb="input"], div[data-baseweb="base-input"] {background: #FFFFFF !important;}
+div[data-baseweb="input"] {border: 1px solid #E3E9F4 !important;}
+.stMultiSelect [data-baseweb="tag"] {background: #EAF1FE !important; border-radius: 8px !important;}
+.stMultiSelect [data-baseweb="tag"] span {color: #1D4ED8 !important; font-weight: 500 !important;}
+.filter-label {
+    font-size: 11px; font-weight: 600; color: #64748B; text-transform: uppercase;
+    letter-spacing: .06em; margin-bottom: 4px;
+}
+
+/* ── Expander ── */
+[data-testid="stExpander"] {
+    background: #FFFFFF; border: 1px solid #E6ECF5 !important; border-radius: 14px;
+    box-shadow: 0 1px 2px rgba(15,27,61,.03); margin-top: 6px; margin-bottom: 14px;
+}
+[data-testid="stExpander"] summary {font-size: 13px; font-weight: 600; color: #334155;}
+[data-testid="stExpander"] details {border: none !important;}
+
+/* ── Buttons ── */
+.stButton > button, .stDownloadButton > button {
+    border-radius: 12px !important; font-weight: 600 !important; font-size: 13px !important;
+    min-height: 42px; padding: 8px 18px !important; transition: all .15s ease !important;
+}
+.stButton > button[kind="primary"] {
+    background: #2563EB !important; border: 1px solid #2563EB !important; color: #fff !important;
+    box-shadow: 0 6px 14px rgba(37,99,235,.25);
+}
+.stButton > button[kind="primary"]:hover {background: #1D4ED8 !important; border-color: #1D4ED8 !important;}
+.stButton > button[kind="secondary"], .stDownloadButton > button {
+    background: #FFFFFF !important; border: 1px solid #E3E9F4 !important; color: #0F1B3D !important;
+    box-shadow: 0 1px 2px rgba(15,27,61,.04);
+}
+.stButton > button[kind="secondary"]:hover, .stDownloadButton > button:hover {
+    background: #F5F8FE !important; border-color: #BFD3F8 !important; color: #1D4ED8 !important;
+}
+
+/* ── Dataframes / alerts ── */
+[data-testid="stDataFrame"] {border-radius: 14px; overflow: hidden; border: 1px solid #E6ECF5;}
+[data-testid="stAlert"] {border-radius: 14px;}
+
+/* ── st.metric → KPI-style card ── */
+/* Every size is "base px x --mk" so the whole card scales uniformly (1 = old size, 0.7 = compact, same as the KPI cards). */
+[data-testid="stMetric"] {
+    --mk: 0.7;
+    background: #FFFFFF; border: 1px solid #E6ECF5; border-radius: calc(18px * var(--mk));
+    box-shadow: 0 1px 2px rgba(15,27,61,.04), 0 8px 20px rgba(37,99,235,.05);
+    padding: calc(16px * var(--mk)) calc(18px * var(--mk));
+    gap: calc(4px * var(--mk));
+}
+[data-testid="stMetricLabel"] {color: #475569 !important; font-weight: 500 !important;}
+[data-testid="stMetricLabel"], [data-testid="stMetricLabel"] * {font-size: calc(12.5px * var(--mk)) !important; line-height: 1.3 !important;}
+[data-testid="stMetricLabel"] svg {width: calc(16px * var(--mk)) !important; height: calc(16px * var(--mk)) !important;}
+[data-testid="stMetricLabel"] *, [data-testid="stMetricDelta"] * {white-space: normal !important; overflow: visible !important; text-overflow: clip !important;}
+[data-testid="stMetricValue"] * {white-space: normal !important; overflow: visible !important; text-overflow: clip !important;}
+[data-testid="stMetricValue"], [data-testid="stMetricValue"] * {font-size: calc(22px * var(--mk)) !important; line-height: 1.2 !important;}
+[data-testid="stMetricValue"] {color: #0F1B3D !important; font-weight: 700 !important; letter-spacing: -0.02em;}
+[data-testid="stMetricDelta"], [data-testid="stMetricDelta"] * {font-size: calc(13px * var(--mk)) !important; line-height: 1.3 !important;}
+[data-testid="stMetricDelta"] svg {width: calc(16px * var(--mk)) !important; height: calc(16px * var(--mk)) !important;}
+
+/* ── Pill tabs ── */
+div[data-testid="stTabs"] [role="tablist"] {
+    gap: 4px; background: #EAF0FA; border-radius: 14px; padding: 4px; display: inline-flex; border-bottom: none !important;
+}
+div[data-testid="stTabs"] [role="tab"] {
+    border-radius: 10px; padding: 8px 18px; height: auto; color: #64748B; font-weight: 500;
+}
+div[data-testid="stTabs"] [role="tab"][aria-selected="true"] {
+    background: #FFFFFF; color: #2563EB; font-weight: 600; box-shadow: 0 1px 3px rgba(15,27,61,.1);
+}
+div[data-testid="stTabs"] [data-baseweb="tab-highlight"], div[data-testid="stTabs"] [data-baseweb="tab-border"] {display: none;}
+
+/* ── Key / value items (VM ownership) ── */
+.kv-grid {display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 16px 20px; margin-top: 8px;}
+.kv-label {font-size: 11px; font-weight: 600; letter-spacing: .06em; text-transform: uppercase; color: #94A3B8;}
+.kv-value {font-size: 14px; font-weight: 600; color: #0F1B3D; margin-top: 3px; word-break: break-word;}
+.kv-value.muted-val {color: #94A3B8; font-weight: 500;}
+
+/* ── Full-screen loading overlay (centered) ── */
+.load-overlay {
+    position: fixed; inset: 0; z-index: 999999; display: flex; align-items: center; justify-content: center;
+    background: rgba(240,245,253,.80); backdrop-filter: blur(5px); -webkit-backdrop-filter: blur(5px);
+    animation: load-fade .2s ease-out;
+}
+.load-card {
+    display: flex; flex-direction: column; align-items: center; gap: 12px; text-align: center;
+    min-width: 320px; max-width: 420px; padding: 28px 40px 26px 40px;
+    background: #FFFFFF; border: 1px solid #E6ECF5; border-radius: 22px;
+    box-shadow: 0 24px 64px rgba(37,99,235,.18), 0 2px 6px rgba(15,27,61,.05);
+}
+.load-logo {height: 26px; overflow: hidden;}
+.load-logo img {width: 68px; height: auto; display: block;}
+.load-ring {
+    width: 46px; height: 46px; border-radius: 50%; margin-top: 4px;
+    border: 4px solid #E3ECFB; border-top-color: #2563EB; animation: load-spin .85s linear infinite;
+}
+.load-title {font-size: 15px; font-weight: 600; color: #0F1B3D; letter-spacing: -0.005em;}
+.load-sub {font-size: 12.5px; color: #64748B; line-height: 1.4;}
+.load-bar {position: relative; width: 190px; height: 4px; margin-top: 4px; background: #E6EEFB; border-radius: 999px; overflow: hidden;}
+.load-bar::after {
+    content: ""; position: absolute; top: 0; left: -40%; width: 40%; height: 100%; border-radius: 999px;
+    background: linear-gradient(90deg, #60A5FA, #2563EB); animation: load-slide 1.2s ease-in-out infinite;
+}
+@keyframes load-spin {to {transform: rotate(360deg);}}
+@keyframes load-slide {0% {left: -40%;} 100% {left: 100%;}}
+@keyframes load-fade {from {opacity: 0;} to {opacity: 1;}}
+
+/* ── Section heading inside pages ── */
+.view-label {font-size: 11px; font-weight: 600; color: #64748B; text-transform: uppercase; letter-spacing: .06em; padding-top: 2px;}
+
+/* ── Footer ── */
+.finops-footer {border-top: 1px solid #E2E8F0; padding-top: 16px; margin-top: 22px;}
+.finops-footer p {color: #94A3B8; font-size: 12px; margin: 0;}
 </style>
 """.replace("__DK__", str(DONUT_K)), unsafe_allow_html=True)
 
@@ -277,15 +651,6 @@ def load_resource_data(start_day, end_day, services, projects, regions, skus, cu
     return run_query(sql, query_params(start_day,end_day,services,projects,regions,skus,currency,resource_search,org), "resources")
 
 
-<<<<<<< HEAD
-def style_chart(fig, height=360):
-    fig.update_layout(height=height, margin=dict(l=10,r=10,t=48,b=10), paper_bgcolor="white",
-                      plot_bgcolor="white", font=dict(family="Arial",color="#34435b"),
-                      legend=dict(orientation="h",yanchor="bottom",y=1.02,xanchor="left",x=0),
-                      hoverlabel=dict(bgcolor="white"))
-    fig.update_xaxes(showgrid=False,zeroline=False)
-    fig.update_yaxes(gridcolor="#edf1f6",zeroline=False)
-=======
 def previous_period_start(start_day, end_day):
     """First day of the period of the same length that ends the day before ``start_day``."""
     return start_day - timedelta(days=(end_day - start_day).days + 1)
@@ -778,63 +1143,233 @@ def style_chart(fig, height=360, legend=False):
     )
     fig.update_xaxes(showgrid=False, zeroline=False, showline=False, tickfont=dict(color="#64748B", size=11))
     fig.update_yaxes(gridcolor="#EDF1F7", zeroline=False, showline=False, tickfont=dict(color="#64748B", size=11))
->>>>>>> pranay1
     return fig
 
 
-st.markdown("""<div class="hero"><h1>💠 GCP FinOps · Cost Intelligence</h1>
-<p>Understand cloud spend by service, project, region, SKU and resource — using the latest available billing export.</p></div>""", unsafe_allow_html=True)
+def card(key):
+    return st.container(border=True, key=f"card_{key}")
+
+
+def card_header(title, desc="", badge="", right_html=""):
+    desc_html = f'<div class="card-desc">{html.escape(desc)}</div>' if desc else ""
+    badge_html = f'<div class="card-badge">{html.escape(badge)}</div>' if badge else ""
+    st.markdown(h(f'<div class="card-head"><div><div class="card-title">{html.escape(title)}</div>{desc_html}</div>'
+                  f'{right_html}{badge_html}</div>'), unsafe_allow_html=True)
+
+
+def donut_legend_html(legend):
+    """Overview-style legend for a leadership donut: coloured dot, name and share. ``legend`` is [(name, colour, share), ...]."""
+    rows = "".join(
+        f'<div class="dl-row"><span class="dl-dot" style="background:{c};"></span>'
+        f'<span class="dl-name" title="{html.escape(str(n), quote=True)}">{html.escape(str(n))}</span>'
+        f'<span class="dl-pct">{s * 100:.1f}%</span></div>' for n, c, s in legend)
+    return f'<div class="dl-list">{rows}</div>'
+
+
+def donut_card(key, fig, legend, title, subtitle="", on_select=None, footer=None):
+    """A leadership donut in the same bordered card as the Overview donuts: header on top, ring on the left, legend on the right.
+
+    ``on_select`` (optional) makes the slices clickable; ``footer`` (optional callable) renders inside the card, e.g. the pills."""
+    with card(f"lead_{key}"):
+        card_header(title, subtitle)
+        chart_col, legend_col = st.columns([1.05, 1], vertical_alignment="center")
+        with chart_col:
+            if on_select is None:
+                st.plotly_chart(fig, use_container_width=True, key=key, config={"displayModeBar": False})
+            else:
+                st.plotly_chart(fig, use_container_width=True, key=key, on_select=on_select, selection_mode="points",
+                                config={"displayModeBar": False})
+        with legend_col:
+            st.markdown(donut_legend_html(legend), unsafe_allow_html=True)
+        if footer:
+            footer()
+
+
+def chart_card(key, fig, chart_key, on_select=None, footer=None, badge=""):
+    """A leadership chart inside the same bordered card + header as the Overview charts.
+
+    The chart's own title / subtitle / top legend move into the card header; ``footer`` (optional callable) renders inside the card."""
+    title, subtitle, legend = vc.detach_header(fig)
+    legend_html = ('<div class="legend-inline">' + "".join(f'<span><i style="background:{c}"></i>{html.escape(str(n))}</span>' for n, c in legend)
+                   + "</div>") if legend else ""
+    with card(f"lead_{key}"):
+        card_header(title, subtitle, badge, right_html=legend_html)
+        if on_select is None:
+            st.plotly_chart(fig, use_container_width=True, key=chart_key, config={"displayModeBar": False})
+        else:
+            st.plotly_chart(fig, use_container_width=True, key=chart_key, on_select=on_select, selection_mode="points",
+                            config={"displayModeBar": False})
+        if footer:
+            footer()
+
+
+def sparkline(values, color, name, bars=False, width=84, height=28):
+    vals = [float(v) for v in values if pd.notna(v)]
+    if len(vals) < 2:
+        return ""
+    if bars:
+        vals = vals[-16:]
+        hi = max(max(vals), 1e-9)
+        bw = width / len(vals)
+        rects = "".join(
+            f'<rect x="{i * bw + 0.8:.1f}" y="{height - max(v / hi * (height - 2), 2):.1f}" '
+            f'width="{max(bw - 1.8, 1):.1f}" height="{max(v / hi * (height - 2), 2):.1f}" rx="1.5" fill="{color}" opacity="{0.35 + 0.65 * (i + 1) / len(vals):.2f}"/>'
+            for i, v in enumerate(vals)
+        )
+        return f'<svg class="kpi-spark" width="{width}" height="{height}" viewBox="0 0 {width} {height}">{rects}</svg>'
+    lo, hi = min(vals), max(vals)
+    span = (hi - lo) or 1.0
+    step = width / (len(vals) - 1)
+    pts = [(i * step, (height - 4) - (v - lo) / span * (height - 8)) for i, v in enumerate(vals)]
+    line = " ".join(f"{x:.1f},{y:.1f}" for x, y in pts)
+    area = f"0,{height} {line} {width},{height}"
+    gid = f"sg_{name}"
+    return (f'<svg class="kpi-spark" width="{width}" height="{height}" viewBox="0 0 {width} {height}">'
+            f'<defs><linearGradient id="{gid}" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="{color}" stop-opacity=".28"/>'
+            f'<stop offset="1" stop-color="{color}" stop-opacity="0"/></linearGradient></defs>'
+            f'<polygon points="{area}" fill="url(#{gid})"/>'
+            f'<polyline points="{line}" fill="none" stroke="{color}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>')
+
+
+def render_kpi_card(label, value, sub, svg_icon, icon_bg, spark=""):
+    st.markdown(h(
+        f'<div class="kpi-card"><div class="kpi-top"><div class="kpi-icon" style="background:{icon_bg};">{svg_icon}</div>'
+        f'<div class="kpi-body"><div class="kpi-label">{html.escape(label)}</div><div class="kpi-value">{value}</div></div></div>'
+        f'<div class="kpi-foot"><div class="kpi-sub" title="{html.escape(sub, quote=True)}">{html.escape(sub)}</div>{spark}</div></div>'
+    ), unsafe_allow_html=True)
+
+
+def top_with_others(frame, label_col, value_col, top_n=6):
+    """Positive totals per label, top N plus a combined 'Others' slice."""
+    series = frame.groupby(label_col)[value_col].sum()
+    series = series[series > 0].sort_values(ascending=False)
+    top = series.head(top_n).copy()
+    rest = series.iloc[top_n:].sum()
+    if rest > 0:
+        top["Others"] = rest
+    return top
+
+
+def render_donut(series, center_value, center_label, height=250):
+    """Donut chart (left) with a percentage legend (right), as in modern SaaS dashboards."""
+    total = float(series.sum())
+    colors = [OTHERS_COLOR if name == "Others" else (UNLABELED_COLOR if name == NOT_LABELED else DONUT_PALETTE[i % len(DONUT_PALETTE)]) for i, name in enumerate(series.index)]
+    fig = go.Figure(go.Pie(
+        labels=list(series.index), values=list(series.values), hole=0.72, sort=False, direction="clockwise",
+        marker=dict(colors=colors, line=dict(color="#FFFFFF", width=3 * DONUT_K)),
+        textinfo="none", hovertemplate="<b>%{label}</b><br>%{value:,.2f} · %{percent}<extra></extra>",
+    ))
+    fig.add_annotation(text=f"<b>{center_value}</b>", x=0.5, y=0.54, showarrow=False, font=dict(size=round(19 * DONUT_K, 1), color=INK))
+    fig.add_annotation(text=center_label, x=0.5, y=0.43, showarrow=False, font=dict(size=round(12 * DONUT_K, 1), color=MUTED))
+    style_chart(fig, round(height * DONUT_K))
+    fig.update_layout(margin=dict(l=0, r=0, t=0, b=0))
+    legend = "".join(
+        f'<div class="dl-row"><span class="dl-dot" style="background:{c};"></span>'
+        f'<span class="dl-name" title="{html.escape(str(n))}">{html.escape(str(n))}</span>'
+        f'<span class="dl-pct">{(v / total * 100 if total else 0):.1f}%</span></div>'
+        for (n, v), c in zip(series.items(), colors)
+    )
+    chart_col, legend_col = st.columns([1.05, 1], vertical_alignment="center")
+    with chart_col:
+        st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False})
+    with legend_col:
+        st.markdown(f'<div class="dl-list">{legend}</div>', unsafe_allow_html=True)
+
+
+def render_ranked_list(frame, label_col, value_col, cur, top_n, color):
+    """Horizontal progress-bar list: name · bar · value · share of total."""
+    grouped = frame.groupby(label_col)[value_col].sum().sort_values(ascending=False)
+    total = float(grouped.sum())
+    top = grouped.head(top_n)
+    peak = max(float(top.max()), 1e-9) if len(top) else 1e-9
+    rows = "".join(
+        f'<div class="rank-row"><div class="rank-name" title="{html.escape(str(name))}">{html.escape(str(name))}</div>'
+        f'<div class="rank-bar"><span style="width:{max(float(v), 0) / peak * 100:.1f}%;background:{color};"></span></div>'
+        f'<div class="rank-val">{money(v, cur)}</div>'
+        f'<div class="rank-pct">{(float(v) / total * 100 if total > 0 else 0):.1f}%</div></div>'
+        for name, v in top.items()
+    )
+    st.markdown(f'<div class="rank-list">{rows}</div>', unsafe_allow_html=True)
+
+
+# ─── SIDEBAR: brand + navigation ─────────────────────────────────────────────
+_logo_html = (f'<div class="side-brand-logo"><img src="{_LOGO_SRC}" alt="IKS" /></div>'
+              if _LOGO_SRC else '<div style="font-size:22px;font-weight:800;color:#C2410C;">IKS</div>')
 
 with st.sidebar:
-    st.markdown("## 🎛️ Dashboard controls")
-    st.caption("Filters apply to all views.")
-    period = st.selectbox("Quick date range", ["Last 7 days","Last 30 days","Last 60 days","Last 90 days","Custom"], index=1)
-    today = date.today()
-    if period == "Custom":
-        chosen = st.date_input("Billing usage dates", value=(today-timedelta(days=29),today), max_value=today)
-        if isinstance(chosen,(tuple,list)) and len(chosen)==2:
-            start_day,end_day = chosen
-        else:
-            start_day=end_day=chosen
-    else:
-        days = {"Last 7 days":7,"Last 30 days":30,"Last 60 days":60,"Last 90 days":90}[period]
-        start_day,end_day = today-timedelta(days=days-1),today
-    if start_day>end_day:
-        st.error("Start date must be before end date.")
-        st.stop()
-    st.markdown("---")
-    if st.button("↻ Refresh billing data", use_container_width=True):
-        get_filter_options.clear()
-        load_summary_data.clear()
-        load_resource_data.clear()
-        st.session_state.pop("finops_resource_result",None)
-        st.session_state.pop("finops_resource_signature",None)
-        st.rerun()
+    st.markdown(h(f'<div class="side-brand">{_logo_html}</div>'), unsafe_allow_html=True)
+    st.markdown('<div class="side-section">Menu</div>', unsafe_allow_html=True)
+    page = st.radio("Navigation", NAV_ITEMS, key="nav", label_visibility="collapsed")
+    st.markdown(h("""
+        <div class="side-powered">
+          <div class="sp-row">
+            <svg width="34" height="34" viewBox="0 0 24 24" fill="none">
+              <defs><linearGradient id="gc" x1="0" y1="0" x2="1" y2="1">
+                <stop offset="0" stop-color="#4285F4"/><stop offset=".5" stop-color="#34A853"/><stop offset="1" stop-color="#FBBC05"/>
+              </linearGradient></defs>
+              <path d="M7 19a4.5 4.5 0 0 1-.6-8.96A6 6 0 0 1 17.8 9.2 4.9 4.9 0 0 1 17.5 19z" fill="url(#gc)" opacity=".92"/>
+              <path d="M9 14.5h6" stroke="#fff" stroke-width="1.8" stroke-linecap="round"/>
+            </svg>
+            <div><div class="sp-small">Powered by</div><div class="sp-big">DevOps@IKS</div></div>
+          </div>
+          <svg class="sp-wave" viewBox="0 0 220 34" preserveAspectRatio="none">
+            <path d="M0 18 C 40 4, 80 30, 120 16 S 190 6, 220 14 L220 34 L0 34 Z" fill="#BFD6FB" opacity=".55"/>
+            <path d="M0 24 C 50 12, 90 34, 140 22 S 200 14, 220 22 L220 34 L0 34 Z" fill="#93BAF7" opacity=".5"/>
+          </svg>
+        </div>
+    """), unsafe_allow_html=True)
 
+
+# ─── 1. TOP BAR: title + global filters ──────────────────────────────────────
+fc0, fc1, fc3, fc4, fc5, fc6 = st.columns([2.2, 1.3, 1.3, 1.3, 1.2, 1.1], vertical_alignment="center")
+with fc0:
+    st.markdown(
+        '<div class="page-title">GCP FinOps</div>'
+        '<div class="page-sub">Cost Intelligence · Spend by business unit, service, project, region, SKU and resource</div>',
+        unsafe_allow_html=True,
+    )
+with fc1:
+    period = st.selectbox(
+        "Quick date range",
+        list(PERIODS) + ["Custom"],
+        index=1,
+        label_visibility="collapsed",
+        help="Select a preset date range or choose Custom to set exact dates.",
+    )
+
+today = date.today()
+if period == "Custom":
+    cd1, _cd2 = st.columns([1.4, 3])
+    with cd1:
+        chosen = st.date_input(
+            "Billing usage dates",
+            value=(today - timedelta(days=29), today),
+            max_value=today,
+            label_visibility="collapsed",
+            help="Pick start and end dates for the billing period.",
+        )
+    if isinstance(chosen, (tuple, list)) and len(chosen) == 2:
+        start_day, end_day = chosen
+    else:
+        start_day = end_day = chosen[0] if isinstance(chosen, (tuple, list)) and chosen else chosen
+else:
+    start_day, end_day = today - timedelta(days=PERIODS[period] - 1), today
+
+if start_day > end_day:
+    st.error("Start date must be before end date.")
+    st.stop()
+
+# Load filter options
 try:
-    with st.spinner("Loading filter options from BigQuery…"):
-        options = get_filter_options(start_day,end_day)
+    with loading_overlay("Loading filters", "Reading services, projects and regions from BigQuery."):
+        options = get_filter_options(start_day, end_day)
 except Exception as exc:
     st.error("Could not read billing-export filter options from BigQuery.")
     st.code(str(exc))
     st.info("Check credentials, BigQuery Job User permission, and Data Viewer access.")
     st.stop()
 
-with st.sidebar:
-    services = st.multiselect("Service",options["services"],placeholder="All services")
-    projects = st.multiselect("Project",options["projects"],placeholder="All projects")
-    regions = st.multiselect("Region",options["regions"],placeholder="All regions")
-    skus = st.multiselect("SKU / meter",options["skus"],placeholder="All SKUs")
-    currency_options = ["ALL"]+options["currencies"]
-    currency = st.selectbox("Billing currency",currency_options,index=(currency_options.index("INR") if "INR" in currency_options else 0))
-    resource_search = st.text_input("Resource name contains",placeholder="e.g. instance, bucket, database")
-    st.caption(f"Source table: `{TABLE_ID}`")
-
 try:
-<<<<<<< HEAD
-    with st.spinner("Loading aggregated billing summary from BigQuery…"):
-        df = load_summary_data(start_day,end_day,services,projects,regions,skus,currency,resource_search)
-=======
     org_combos = get_org_options(start_day, end_day)
 except Exception:
     # fall back to the BU billing plan itself when the options query fails
@@ -915,7 +1450,6 @@ with st.expander("More filters", expanded=False):
 try:
     with loading_overlay("Loading billing data", "Aggregating your cloud spend from BigQuery."):
         df = load_summary_data(start_day, end_day, services, projects, regions, skus, currency, resource_search, org)
->>>>>>> pranay1
 except Exception as exc:
     st.error("Unable to load the billing summary.")
     st.code(str(exc))
@@ -933,26 +1467,73 @@ latest_export = pd.to_datetime(df["latest_export_time"], errors="coerce", utc=Tr
 selected_currency = df["currency"].dropna().unique().tolist()
 if len(selected_currency) > 1:
     st.warning("Multiple currencies are included. Totals are not converted; select one currency for a meaningful total.")
-cur_label = selected_currency[0] if len(selected_currency)==1 else "Mixed currency"
+cur_label = selected_currency[0] if len(selected_currency) == 1 else "Mixed currency"
+cur_symbol = currency_symbol(cur_label) if len(selected_currency) == 1 else ""
+period_label = period if period != "Custom" else "Custom range"
 
-st.markdown(f"<div class='muted'>Usage period: <b>{start_day:%d %b %Y}</b> to <b>{end_day:%d %b %Y}</b> · Latest available billing export, not live metering</div>",unsafe_allow_html=True)
-if pd.notna(latest_export):
-    st.caption(f"Latest export timestamp: {latest_export.strftime('%d %b %Y, %H:%M UTC')} · Cached for {CACHE_TTL//60} minute(s).")
+# ─── Status row: period pill + export timestamp ──────────────────────────────
+_export_ts_str = latest_export.strftime('%b %d, %Y · %H:%M UTC') if pd.notna(latest_export) else 'N/A'
+st.markdown(h(
+    f'<div class="status-row"><span class="period-pill">{start_day:%d %b %Y} — {end_day:%d %b %Y}</span>'
+    f'<span><span class="status-dot"></span>Last export: {_export_ts_str} (Cached: {CACHE_TTL // 60} min)</span></div>'
+), unsafe_allow_html=True)
 
-gross,credits_total,net = df["gross_cost"].sum(),df["credits"].sum(),df["net_cost"].sum()
-row_count,services_count = int(df["billing_rows"].sum()),df["service"].nunique()
-k1,k2,k3,k4,k5 = st.columns(5)
-k1.metric("Net cost after credits",money(net,cur_label))
-k2.metric("Gross cost",money(gross,cur_label))
-k3.metric("Credits / adjustments",money(credits_total,cur_label))
-k4.metric("Billing rows represented",f"{row_count:,}")
-k5.metric("Services",f"{services_count:,}")
 
-view = st.radio("Dashboard view",["📊 Overview","🧱 Resource explorer","🧭 Cost breakdowns","⬇️ Data & export"],horizontal=True,label_visibility="collapsed")
+# ─── 3. KPI ROW ─────────────────────────────────────────────────────────────
+gross, credits_total, net = df["gross_cost"].sum(), df["credits"].sum(), df["net_cost"].sum()
+row_count, services_count = int(df["billing_rows"].sum()), df["service"].nunique()
+projects_count = df["project"].nunique()
 
-if view=="📊 Overview":
-    left,right = st.columns([1.65,1])
-    daily = df.groupby(["usage_date","currency"],as_index=False)[["gross_cost","credits","net_cost"]].sum().sort_values("usage_date")
+daily_all = (df.groupby("usage_date", as_index=False)
+               .agg(gross_cost=("gross_cost", "sum"), credits=("credits", "sum"), net_cost=("net_cost", "sum"),
+                    billing_rows=("billing_rows", "sum"), services=("service", "nunique"))
+               .sort_values("usage_date"))
+n_days = max(int(daily_all["usage_date"].nunique()), 1)
+credit_share = abs(credits_total) / gross * 100 if gross else 0
+net_share = net / gross * 100 if gross else 0
+
+if page != "Leadership":
+    k1, k2, k3, k4, k5 = st.columns(5)
+    with k1:
+        render_kpi_card("Net Cost After Credits", money(net, cur_label), f"{net_share:.1f}% of gross cost",
+                        SVG_NET_COST, "#E8F0FE", sparkline(daily_all["net_cost"], "#2563EB", "net"))
+    with k2:
+        render_kpi_card("Gross Cost", money(gross, cur_label), f"{period_label}",
+                        SVG_GROSS_COST, "#F1EAFE", sparkline(daily_all["gross_cost"], "#8B5CF6", "gross"))
+    with k3:
+        render_kpi_card("Credits / Adjustments", money(credits_total, cur_label), f"{credit_share:.1f}% of gross cost",
+                        SVG_CREDITS, "#E3F8EC", sparkline(daily_all["credits"], "#22C55E", "credits"))
+    with k4:
+        render_kpi_card("Billing Rows", f"{row_count:,}", f"Avg {row_count / n_days:,.0f} rows / day",
+                        SVG_ROWS, "#E6F0FF", sparkline(daily_all["billing_rows"], "#3B82F6", "rows"))
+    with k5:
+        render_kpi_card("Services", f"{services_count:,}", f"across {projects_count:,} projects",
+                        SVG_SERVICES, "#FEF1DC", sparkline(daily_all["services"], "#F59E0B", "svc", bars=True))
+
+    st.markdown('<div style="height:14px"></div>', unsafe_allow_html=True)
+
+
+# ─── PAGE: Overview ─────────────────────────────────────────────────────────
+if page == "Overview":
+    # Owner + feature labels: one cached BigQuery scan feeds both donuts below.
+    label_df, label_error = None, ""
+    try:
+        try:
+            label_df = load_owner_feature_cost(start_day, end_day, services, projects, regions, skus, currency, resource_search, org, True)
+        except Exception:
+            # curated feature-mapping table not readable -> fall back to labels only
+            label_df = load_owner_feature_cost(start_day, end_day, services, projects, regions, skus, currency, resource_search, org, False)
+        label_df = label_df.copy()
+        label_df["net_cost"] = pd.to_numeric(label_df["net_cost"], errors="coerce").fillna(0)
+        owner_map = load_owner_map()
+        if owner_map:  # spend without an owner label falls back to the project -> owner mapping
+            unmapped = label_df["owner_name"] == NOT_LABELED
+            label_df.loc[unmapped, "owner_name"] = label_df.loc[unmapped, "project_id"].map(owner_map).fillna(NOT_LABELED)
+    except Exception as exc:
+        label_df = None
+        label_error = str(exc).splitlines()[0][:200]
+
+    left, right = st.columns([1.7, 1])
     with left:
         with card("trend"):
             card_header(
@@ -1002,48 +1583,55 @@ if view=="📊 Overview":
             render_ranked_list(df, "project", "net_cost", cur_label, 12, "linear-gradient(90deg,#3B82F6,#60A5FA)")
 
     with right:
-        st.markdown("<div class='section-head'>Spend by service</div>",unsafe_allow_html=True)
-        by_service = df.groupby("service",as_index=False)["net_cost"].sum().sort_values("net_cost",ascending=False).head(10)
-        fig = px.bar(by_service.sort_values("net_cost"),x="net_cost",y="service",orientation="h",title="Top 10 services",color="net_cost",color_continuous_scale=["#b7d8f4","#1457a6"])
-        fig.update_layout(coloraxis_showscale=False,yaxis_title="")
-        st.plotly_chart(style_chart(fig,390),use_container_width=True)
-    c1,c2 = st.columns(2)
-    with c1:
-        st.markdown("<div class='section-head'>Cost by project</div>",unsafe_allow_html=True)
-        projects_cost = df.groupby("project",as_index=False)["net_cost"].sum().sort_values("net_cost",ascending=False).head(12)
-        fig = px.bar(projects_cost.sort_values("net_cost"),x="net_cost",y="project",orientation="h",title="Top projects",color_discrete_sequence=["#6c63d9"])
-        fig.update_layout(yaxis_title="")
-        st.plotly_chart(style_chart(fig,360),use_container_width=True)
-    with c2:
-        st.markdown("<div class='section-head'>Credits by service</div>",unsafe_allow_html=True)
-        credit_service = df.groupby("service",as_index=False)["credits"].sum()
-        credit_service = credit_service[credit_service["credits"]!=0].sort_values("credits").head(12)
-        if credit_service.empty:
-            st.info("No credits were recorded for these filters and dates.")
-        else:
-            fig = px.bar(credit_service,x="credits",y="service",orientation="h",title="Largest credit amounts",color_discrete_sequence=["#e09a37"])
-            fig.update_layout(yaxis_title="")
-            st.plotly_chart(style_chart(fig,360),use_container_width=True)
+        with card("donut_service"):
+            card_header("Cost by Service", badge="Top 6 + Others")
+            svc = top_with_others(df, "service", "net_cost", 6)
+            if svc.empty:
+                st.info("No positive net cost for these filters and dates.")
+            else:
+                render_donut(svc, money(net, cur_label), "Total Cost", height=290)
 
-elif view=="🧱 Resource explorer":
-    st.markdown("<div class='section-head'>Resource-level cost explorer</div>",unsafe_allow_html=True)
-    st.caption("Resource detail is queried only when requested. The BigQuery result is capped at 1,000 grouped combinations.")
-    signature = (str(start_day),str(end_day),tuple(services),tuple(projects),tuple(regions),tuple(skus),currency,resource_search.strip())
-    if st.button("Load resource details (up to 1,000 rows)",type="primary"):
+        with card("donut_feature"):
+            if label_df is None:
+                card_header("Cost by Feature", badge="Top 6 + Others")
+                st.info("Could not load cost by feature.")
+                st.caption(label_error)
+            else:
+                fe_total = float(label_df.loc[label_df["net_cost"] > 0, "net_cost"].sum())
+                fe_unlabeled = float(label_df.loc[(label_df["feature_name"] == NOT_LABELED) & (label_df["net_cost"] > 0), "net_cost"].sum())
+                fe_desc = f"{fe_unlabeled / fe_total * 100:.0f}% of cost has no feature label" if fe_total > 0 and fe_unlabeled > 0 else ""
+                card_header("Cost by Feature", fe_desc, badge="Top 6 + Others")
+                fe = top_with_others(label_df, "feature_name", "net_cost", 6)
+                if fe.empty:
+                    st.info("No positive net cost for these filters and dates.")
+                else:
+                    render_donut(fe, money(fe_total, cur_label), "Total Cost", height=290)
+        with card("donut_credits"):
+            card_header("Credits by Service", "Largest credit / adjustment amounts by service")
+            credit_df = df.assign(credit_abs=df["credits"].abs())
+            credit_df = credit_df[credit_df["credits"] != 0]
+            if credit_df.empty:
+                st.info("No credits were recorded for these filters and dates.")
+            else:
+                cred = top_with_others(credit_df, "service", "credit_abs", 6)
+                render_donut(cred, money(abs(credits_total), cur_label), "Total Credits", height=230)
+
+
+# ─── PAGE: Leadership (executive overview + VM efficiency) ──────────────────
+elif page == "Leadership":
+    st.markdown(vc.KPI_CSS + bl.EXEC_CSS + bl.LEAD_CSS, unsafe_allow_html=True)
+    tab_cost,tab_vm = st.tabs(["Executive overview","VM efficiency"])
+    with tab_cost:
+        prev_start = previous_period_start(start_day,end_day)
+        bill_filters = (services,projects,regions,skus,currency,resource_search,org)
+        billing = daily_all = None
         try:
-            with st.spinner("Loading resource details from BigQuery…"):
-                result = load_resource_data(start_day,end_day,services,projects,regions,skus,currency,resource_search)
-            st.session_state["finops_resource_result"] = result
-            st.session_state["finops_resource_signature"] = signature
+            with loading_overlay("Loading leadership billing data…"):
+                billing = load_leadership_billing(start_day,end_day,prev_start,*bill_filters)
+                daily_all = load_leadership_daily(start_day,end_day,prev_start,*bill_filters)
         except Exception as exc:
-            st.error("Unable to load resource details.")
+            st.error("Unable to load the leadership billing data.")
             st.code(str(exc))
-<<<<<<< HEAD
-    if st.session_state.get("finops_resource_signature")==signature:
-        resource_df = st.session_state["finops_resource_result"].copy()
-        if resource_df.empty:
-            st.info("No resource combinations matched the current filters.")
-=======
         if billing is not None and billing.loc[billing["period"]=="current","net_cost"].abs().sum()==0:
             st.warning("No cost found for these dates and filters.")
         elif billing is not None:
@@ -1357,22 +1945,149 @@ elif view=="🧱 Resource explorer":
         if st.session_state.get("finops_vm_signature")!=lead_signature:
             st.info("Click **Load leadership data**. It reads the VM list, CPU/RAM history and billed cost for the selected dates "
                     "(the same data as the **CPU & RAM** view, so loading it once serves both).")
->>>>>>> pranay1
         else:
-            for col in ["gross_cost","credits","net_cost","usage_amount","billing_rows"]:
-                resource_df[col] = pd.to_numeric(resource_df[col],errors="coerce").fillna(0)
-            top_n = st.select_slider("Rows to display",options=[25,50,100,250,500,1000],value=100)
-            st.dataframe(resource_df.head(top_n),use_container_width=True,hide_index=True,column_config={
-                "gross_cost":st.column_config.NumberColumn("Gross cost",format="%.2f"),
-                "credits":st.column_config.NumberColumn("Credits",format="%.2f"),
-                "net_cost":st.column_config.NumberColumn("Net cost",format="%.2f"),
-                "usage_amount":st.column_config.NumberColumn("Usage quantity",format="%.4f"),
-                "billing_rows":st.column_config.NumberColumn("Billing rows",format="%d")})
-            st.caption(f"Showing {min(top_n,len(resource_df)):,} of {len(resource_df):,} returned combinations.")
-            st.download_button("⬇️ Download displayed resource report (CSV)",data=resource_df.head(top_n).to_csv(index=False).encode("utf-8-sig"),file_name=f"gcp_finops_resources_{start_day}_{end_day}.csv",mime="text/csv")
-            st.download_button("⬇️ Download all returned resource rows (CSV)",data=resource_df.to_csv(index=False).encode("utf-8-sig"),file_name=f"gcp_finops_resources_all_{start_day}_{end_day}.csv",mime="text/csv")
-    else:
-        st.info("Click **Load resource details** to run the resource-level query for the current filters.")
+            vm_data = st.session_state["finops_vm_data"]
+            window_start = datetime.combine(start_day,dtime.min,tzinfo=timezone.utc)
+            window_end = min(datetime.combine(end_day+timedelta(days=1),dtime.min,tzinfo=timezone.utc),datetime.now(timezone.utc))
+            recs = build_recommendations(vm_data["inventory"],vm_data["util"],vm_data["costs"],vm_data["catalogs"],window_start,window_end,Params())
+            if vm_data["errors"]:
+                with st.expander(f"{len(vm_data['errors'])} request(s) failed",expanded=False):
+                    for message in vm_data["errors"]:
+                        st.code(message)
+            if recs.empty:
+                st.warning("No running VMs were found for the configured project(s).")
+            else:
+                vm_cur = vm_data["costs"]["currency"].iloc[0] if not vm_data["costs"].empty else cur_label
+                fmt_money = lambda v: money(v,vm_cur)
+                sm = lead.summary(recs)
+                st.caption(f"Running VMs in {', '.join(MONITORING_PROJECTS)} · {start_day:%d %b %Y} to {end_day:%d %b %Y} · default sizing assumptions "
+                           "(CPU 60% / RAM 70% at the p95 hourly peak). Change them in the **CPU & RAM** view for a technical deep dive.")
+                cards = [
+                    ("Est. monthly savings",fmt_money(sm["savings"]),f"≈ {fmt_money(sm['yearly'])} a year","#10B981",
+                     f"Downsizing idle and over-provisioned VMs. vCPUs {sm['vcpu_now']:,.0f} → {sm['vcpu_rec']:,.0f}."),
+                    ("Savings potential",f"{sm['savings_pct']:.0%}",f"of {fmt_money(sm['base_cost'])} monthly VM compute","#F59E0B","Share of VM compute cost that could be saved."),
+                    ("VMs to downsize",f"{sm['down']:,}",f"{sm['idle']} idle · {sm['over']} over-provisioned","#8B5CF6","Idle and over-provisioned VMs."),
+                    ("VMs running hot",f"{sm['up']:,}",f"+{fmt_money(sm['extra'])} a month to fix","#EF4444","VMs that need more CPU or RAM."),
+                    ("Fleet right-sized",f"{sm['right_pct']:.0%}",f"{sm['right']} of {sm['evaluated']} evaluated VMs","#3B82F6","Share of evaluated VMs whose size fits."),
+                    ("Owner label coverage",f"{sm['owner_pct']:.0%}",f"{sm['no_owner']} VMs have no owner","#06B6D4","VMs carrying an owner label."),
+                ]
+                icons = [(SVG_CREDITS,"#E3F8EC"),(SVG_SERVICES,"#FEF1DC"),(SVG_SERVER,"#F1EAFE"),(SVG_ALERT,"#FEE2E2"),(SVG_CHECK,"#E8F0FE"),(SVG_USERS,"#E0F5FA")]
+                for holder,(label,value,sub,_accent,_tip),(svg,bg) in zip(st.columns(6),cards,icons):
+                    with holder:
+                        render_kpi_card(label,value,sub,svg,bg)
+                st.markdown('<div style="height:6px"></div>',unsafe_allow_html=True)
+
+                def on_chart_click(chart_key,lookup,kind):
+                    """Callback: remember which bar was clicked; the details pop-up opens on the rerun."""
+                    def _cb():
+                        state = st.session_state.get(chart_key)
+                        points = state["selection"]["points"] if state else []
+                        value = lead.resolve_click(points,lookup)
+                        if value is not None:
+                            st.session_state["lead_open"] = (kind,value)
+                    return _cb
+
+                def clickable(fig,lookup,chart_key,kind):
+                    chart_card(chart_key,fig,chart_key,on_select=on_chart_click(chart_key,lookup,kind))
+
+                row1a,row1b = st.columns(2)
+                with row1a:
+                    fig,lookup = lead.health_bars(recs,fmt_money)
+                    clickable(fig,lookup,"lead_chart_health","status")
+                with row1b:
+                    fig,lookup = lead.savings_by_group(recs,"client",fmt_money)
+                    if fig is None:
+                        st.info("No downsizing savings to show by client.")
+                    else:
+                        clickable(fig,lookup,"lead_chart_client","client")
+                row2a,row2b = st.columns(2)
+                with row2a:
+                    fig,lookup = lead.savings_by_group(recs,"owner",fmt_money)
+                    if fig is None:
+                        st.info("No downsizing savings to show by owner.")
+                    else:
+                        clickable(fig,lookup,"lead_chart_owner","owner")
+                with row2b:
+                    fig,lookup = lead.savings_by_group(recs,"environment",fmt_money)
+                    if fig is None:
+                        st.info("No downsizing savings to show by environment.")
+                    else:
+                        clickable(fig,lookup,"lead_chart_env","environment")
+                row3a,row3b = st.columns(2)
+                with row3a:
+                    fig,lookup = lead.top_vm_savings(recs,fmt_money)
+                    if fig is None:
+                        st.info("No VM savings to show.")
+                    else:
+                        clickable(fig,lookup,"lead_chart_vms","vm")
+                with row3b:
+                    fig,lookup = lead.label_coverage(recs)
+                    clickable(fig,lookup,"lead_chart_labels","unlabeled")
+
+                with st.expander("Prefer a list? Open details without clicking",expanded=False):
+                    kinds = {"Status":"status","Client":"client","Owner":"owner","Environment":"environment","Department":"department","Application":"application","A single VM":"vm"}
+                    pick_label = st.selectbox("What do you want to look at?",list(kinds),key="lead_pick_kind")
+                    pick_kind = kinds[pick_label]
+                    if pick_kind=="vm":
+                        vm_names = recs.sort_values("monthly_saving",ascending=False,na_position="last").set_index("instance_id")["instance_name"].to_dict()
+                        pick_value = st.selectbox("VM",list(vm_names),format_func=lambda i: vm_names[i],key="lead_pick_vm")
+                    elif pick_kind=="status":
+                        pick_value = st.selectbox("Status",[s for s in STATUS_ORDER if s in set(recs["status"])],key="lead_pick_status")
+                    else:
+                        pick_value = st.selectbox(pick_label,sorted(recs[pick_kind].unique(),key=lambda v:(v==NOT_LABELED,str(v).lower())),key=f"lead_pick_{pick_kind}")
+                    if st.button("Open details",key="lead_pick_open"):
+                        st.session_state["lead_open"] = (pick_kind,pick_value)
+                        st.rerun()
+
+                opened = st.session_state.pop("lead_open",None)
+                if opened:
+                    open_kind,open_value = opened
+                    open_rows = lead.select_rows(recs,open_kind,open_value)
+                    open_title,open_sub = lead.describe(open_kind,open_value,recs)
+
+                    @st.dialog(open_title,width="large")
+                    def show_lead_details():
+                        render_lead_details(open_rows,open_kind,open_value,open_sub,vm_data,fmt_money)
+                    show_lead_details()
+
+
+# ─── PAGE: Resource explorer ────────────────────────────────────────────────
+elif page == "Resource explorer":
+    with card("resources"):
+        card_header("Resource-level cost explorer",
+                    "Drill into cost by individual resource. Query runs on demand and returns up to 1,000 grouped rows.")
+        signature = (str(start_day), str(end_day), tuple(services), tuple(projects), tuple(regions), tuple(skus), currency, resource_search.strip(), org)
+        if st.button("Load resource details (up to 1,000 rows)", type="primary"):
+            try:
+                with loading_overlay("Loading resource details", "Querying resource-level cost from BigQuery."):
+                    result = load_resource_data(start_day, end_day, services, projects, regions, skus, currency, resource_search, org)
+                st.session_state["finops_resource_result"] = result
+                st.session_state["finops_resource_signature"] = signature
+            except Exception as exc:
+                st.error("Unable to load resource details.")
+                st.code(str(exc))
+        if st.session_state.get("finops_resource_signature") == signature:
+            resource_df = st.session_state["finops_resource_result"].copy()
+            if resource_df.empty:
+                st.info("No resource combinations matched the current filters.")
+            else:
+                for col in ["gross_cost", "credits", "net_cost", "usage_amount", "billing_rows"]:
+                    resource_df[col] = pd.to_numeric(resource_df[col], errors="coerce").fillna(0)
+                top_n = st.select_slider("Rows to display", options=[25, 50, 100, 250, 500, 1000], value=100)
+                st.dataframe(resource_df.head(top_n), use_container_width=True, hide_index=True, column_config={
+                    "gross_cost": st.column_config.NumberColumn("Gross cost", format="%.2f"),
+                    "credits": st.column_config.NumberColumn("Credits", format="%.2f"),
+                    "net_cost": st.column_config.NumberColumn("Net cost", format="%.2f"),
+                    "usage_amount": st.column_config.NumberColumn("Usage quantity", format="%.4f"),
+                    "billing_rows": st.column_config.NumberColumn("Billing rows", format="%d")})
+                st.caption(f"Showing {min(top_n, len(resource_df)):,} of {len(resource_df):,} returned combinations.")
+                dl1, dl2, _ = st.columns([1, 1, 2])
+                with dl1:
+                    st.download_button("Download displayed rows (CSV)", data=resource_df.head(top_n).to_csv(index=False).encode("utf-8-sig"), file_name=f"gcp_finops_resources_{start_day}_{end_day}.csv", mime="text/csv", use_container_width=True)
+                with dl2:
+                    st.download_button("Download all rows (CSV)", data=resource_df.to_csv(index=False).encode("utf-8-sig"), file_name=f"gcp_finops_resources_all_{start_day}_{end_day}.csv", mime="text/csv", use_container_width=True)
+        else:
+            st.info("Click **Load resource details** to run the resource-level query for the current filters.")
 
 
 # ─── PAGE: Cost breakdowns ──────────────────────────────────────────────────
@@ -1383,34 +2098,31 @@ elif page == "Cost breakdowns":
             card_header("Region Cost Distribution", "Net cost broken down by cloud region", badge="Top 20")
             render_ranked_list(df, "region", "net_cost", cur_label, 20, "linear-gradient(90deg,#14B8A6,#5EEAD4)")
     with b2:
-        st.markdown("<div class='section-head'>SKU / billing meter</div>",unsafe_allow_html=True)
-        sku_cost = df.groupby("sku",as_index=False)["net_cost"].sum().nlargest(20,"net_cost")
-        fig = px.bar(sku_cost.sort_values("net_cost"),x="net_cost",y="sku",orientation="h",title="Top 20 SKUs",color_discrete_sequence=["#6c63d9"])
-        fig.update_layout(yaxis_title="")
-        st.plotly_chart(style_chart(fig,420),use_container_width=True)
-    st.markdown("<div class='section-head'>Service × project matrix</div>",unsafe_allow_html=True)
-    heat = df.groupby(["service","project"],as_index=False)["net_cost"].sum()
-    top_services = df.groupby("service")["net_cost"].sum().nlargest(12).index
-    top_projects = df.groupby("project")["net_cost"].sum().nlargest(12).index
-    heat = heat[heat["service"].isin(top_services)&heat["project"].isin(top_projects)]
-    if not heat.empty:
-        pivot = heat.pivot(index="service",columns="project",values="net_cost").fillna(0)
-        fig = px.imshow(pivot,aspect="auto",color_continuous_scale="Blues",labels=dict(x="Project",y="Service",color="Net cost"),title="Top services and projects")
-        st.plotly_chart(style_chart(fig,480),use_container_width=True)
+        with card("sku"):
+            card_header("SKU / Billing Meter", "Top SKUs by net cost", badge="Top 20")
+            render_ranked_list(df, "sku", "net_cost", cur_label, 20, "linear-gradient(90deg,#8B5CF6,#C4B5FD)")
 
-else:
-    st.markdown("<div class='section-head'>Aggregated billing data</div>",unsafe_allow_html=True)
-    st.caption("Summary is grouped by usage date, service, project, region and SKU. Amounts remain in the source currency.")
-    st.dataframe(df.sort_values("net_cost",ascending=False).head(20000),use_container_width=True,hide_index=True)
-    st.caption("The table displays at most 20,000 summary rows.")
-    st.download_button("⬇️ Download summary data (CSV)",data=df.to_csv(index=False).encode("utf-8-sig"),file_name=f"gcp_finops_summary_{start_day}_{end_day}.csv",mime="text/csv")
-    daily_export = df.groupby(["usage_date","currency"],as_index=False)[["gross_cost","credits","net_cost"]].sum().sort_values("usage_date")
-    st.download_button("⬇️ Download daily trend (CSV)",data=daily_export.to_csv(index=False).encode("utf-8-sig"),file_name=f"gcp_finops_daily_cost_{start_day}_{end_day}.csv",mime="text/csv")
+    st.markdown('<div style="height:6px"></div>', unsafe_allow_html=True)
+    with card("matrix"):
+        card_header("Service × Project Matrix", "Heatmap showing net cost at the intersection of top services and projects")
+        heat = df.groupby(["service", "project"], as_index=False)["net_cost"].sum()
+        top_services = df.groupby("service")["net_cost"].sum().nlargest(12).index
+        top_projects = df.groupby("project")["net_cost"].sum().nlargest(12).index
+        heat = heat[heat["service"].isin(top_services) & heat["project"].isin(top_projects)]
+        if not heat.empty:
+            pivot = heat.pivot(index="service", columns="project", values="net_cost").fillna(0)
+            blue_scale = [
+                [0.0, "#F4F8FF"], [0.2, "#DCE9FD"], [0.4, "#B6D0FB"],
+                [0.6, "#7FAEF7"], [0.8, "#3B82F6"], [1.0, "#1D4ED8"],
+            ]
+            fig = px.imshow(pivot, aspect="auto", color_continuous_scale=blue_scale,
+                            labels=dict(x="Project", y="Service", color="Net cost"))
+            style_chart(fig, 480)
+            fig.update_layout(coloraxis_colorbar=dict(thickness=10, len=0.8, outlinewidth=0, tickfont=dict(size=11, color=MUTED)))
+            st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False})
+        else:
+            st.info("Not enough data to build the service × project matrix for the current filters.")
 
-<<<<<<< HEAD
-st.markdown("---")
-st.markdown("<div class='muted'>FinOps dashboard · Read-only billing analytics · Costs reflect the latest rows available in the configured Cloud Billing export. Export delays, credits and adjustments can change historical totals.</div>",unsafe_allow_html=True)
-=======
 
 # ─── PAGE: CPU & RAM (VM utilization, right-sizing, owner/client labels) ─────
 elif page == "CPU & RAM":
@@ -1775,4 +2487,4 @@ st.markdown(f"""
     <p style="margin-top:4px;">Source table: <code>{TABLE_ID}</code></p>
 </div>
 """, unsafe_allow_html=True)
->>>>>>> pranay1
+
