@@ -160,7 +160,7 @@ def dim_sql(dim):
 
 # --------------------------------------------------------------------------- formatting helpers
 def arrow_text(delta, delta_pct, fmt_money):
-    """'▲ ₹1.2M (+23%)' / '▼ ₹300K (-8%)' / 'no change'."""
+    """'▲ $1.2M (+23%)' / '▼ $300K (-8%)' / 'no change'."""
     if abs(delta) < 0.5:
         return "no change"
     sign = "▲" if delta > 0 else "▼"
@@ -520,7 +520,7 @@ def bu_chips(colors):
 
 
 def change_span(delta, delta_pct, fmt_money, suffix=""):
-    """Coloured '▲ ₹1.2M (+23%)' for HTML. More spend is red, less is green."""
+    """Coloured '▲ $1.2M (+23%)' for HTML. More spend is red, less is green."""
     if abs(delta) < 0.5:
         return f"no change{html.escape(suffix)}"
     cls = "up" if delta > 0 else "down"
@@ -924,6 +924,16 @@ EXEC_CSS = """
 /* Cards that sit side by side share one CSS grid: equal heights, no fixed pixel heights, no inner scrollbars, stacks on narrow screens */
 .stApp .xgrid{display:grid;gap:1rem;align-items:stretch;margin:0}
 @media (max-width:1100px){.stApp .xgrid{grid-template-columns:minmax(0,1fr) !important}}
+/* Product cost view + leadership actions: native bordered cards (they hold widgets), stretched to one height */
+.stApp .st-key-card_lead_prod .xbody{min-width:0;overflow-x:auto;scrollbar-width:thin;scrollbar-color:#CBD5E1 transparent}
+.stApp .st-key-lead_prod_row [data-testid="stHorizontalBlock"]{align-items:stretch}
+.stApp .st-key-lead_prod_row [data-testid="stColumn"]{display:flex;flex-direction:column}
+.stApp .st-key-lead_prod_row [data-testid="stColumn"] > div{flex:1 1 auto;display:flex;flex-direction:column}
+.stApp .st-key-lead_prod_row [data-testid="stColumn"] > div > div{flex:1 1 auto;display:flex;flex-direction:column}
+.stApp .st-key-lead_prod_row [data-testid="stColumn"] > div > div > [data-testid="stVerticalBlock"]{flex:1 1 auto}
+.stApp .st-key-lead_prod_row [data-testid="stVerticalBlockBorderWrapper"]:has(> div > [class*="st-key-card_lead_"]){flex:1 1 auto}
+.stApp .st-key-card_lead_prod [data-testid="stSelectbox"]{margin-top:-4px}
+.stApp [data-testid="stVerticalBlockBorderWrapper"]:has(> div > .st-key-lead_prod_row){margin-top:10px}
 
 /* ── Spend by business unit bars ── */
 .stApp .xbar{display:grid;grid-template-columns:minmax(80px,1fr) 1.6fr auto;align-items:center;gap:12px;margin:0 0 10px;font-size:13px}
@@ -948,11 +958,14 @@ EXEC_CSS = """
 .stApp .xempty{color:#64748B;font-size:13px;padding:22px 0;text-align:center}
 
 /* ── Tables (watchlist, product cost view) ── */
-.stApp .xtable{width:100%;border-collapse:collapse;font-size:13px;margin:0}
+.stApp .xtable{width:100%;border-collapse:collapse;font-size:13px;margin:0;border:none !important;display:table}
+/* Reset Streamlit's markdown table look (cell grid lines, zebra rows) so only the row dividers below remain */
+.stApp .xtable th,.stApp .xtable td{border:none !important}
+.stApp .xtable tr,.stApp .xtable tr:nth-child(even),.stApp .xtable tbody tr:nth-child(even){background:transparent !important;border:none !important}
 .stApp .xtable th{position:sticky;top:0;background:#FFFFFF;font-size:11px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;
-           color:#64748B;text-align:left;padding:7px 10px 7px 0;border-bottom:1px solid #E6ECF5;border-top:none}
-.stApp .xtable td{padding:10px 10px 10px 0;border-bottom:1px solid #EDF1F7;border-top:none;color:#0F1B3D;vertical-align:middle;background:transparent}
-.stApp .xtable tr:last-child td{border-bottom:none}
+           color:#64748B;text-align:left;padding:7px 10px 7px 0;border-bottom:1px solid #E6ECF5 !important}
+.stApp .xtable td{padding:10px 10px 10px 0;border-bottom:1px solid #EDF1F7 !important;color:#0F1B3D;vertical-align:middle;background:transparent}
+.stApp .xtable tr:last-child td{border-bottom:none !important}
 .stApp .xtable tr:hover td{background:#F8FAFE}
 .stApp .xtable td small{display:block;color:#64748B;font-size:11.5px;line-height:1.35}
 .stApp .xtable td.num{text-align:right;white-space:nowrap;font-variant-numeric:tabular-nums}
