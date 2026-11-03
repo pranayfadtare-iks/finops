@@ -1071,7 +1071,7 @@ def period_trend(daily, start_day, end_day, fmt_money, height=380):
                          customdata=cur.map(fmt_money).values, hovertemplate="From %{x}<br><b>%{customdata}</b><extra></extra>"))
     fig.update_layout(barmode="group", bargap=0.38, bargroupgap=0.08)
     partial = " · last bar is a partial " + ("week" if step == 7 else "period") if days % step else ""
-    card_layout(fig, "Cloud spend trend", f"{unit} net cost · selected period vs the one before it{partial}", height, legend=True)
+    card_layout(fig, "Cloud spend trend by month",f"{unit} net cost · selected period vs the one before it{partial}", height, legend=True)
     fig.update_xaxes(type="category")
     fig.update_yaxes(tickformat=",.2s", rangemode="tozero")
     return fig
