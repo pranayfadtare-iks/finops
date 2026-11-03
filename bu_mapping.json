@@ -1,0 +1,57 @@
+{
+  "_readme": [
+    "How billing spend is rolled up for the Leadership view (source: 'DevOps BU list' sheet).",
+    "business_units: business unit -> application -> values of the 'feature' label (lower case) that belong to it.",
+    "feature_clusters: feature-cluster -> values of the 'feature' label. Used first; otherwise the 'feature-cluster' label is used.",
+    "cluster_label_aliases: spellings of the 'feature-cluster' label that mean the same cluster.",
+    "Features that match nothing show up as business unit 'Unmapped' (listed under Mapping health on the Leadership page).",
+    "'Tech Shared' is not in the BU billing plan; it collects shared tooling cost so it is not reported as unmapped."
+  ],
+  "business_units": {
+    "Ambulatory": {
+      "VCA (Stacks, AssuRx, Inbox)": ["stacks", "stacks-1-0", "stacks-2-0", "stack-2-0", "stacks-plus", "stacks-ai-ml", "stacks-ai-ml-old", "stacks-ai-mi", "assurx", "inbox"],
+      "EVE": ["eve", "evelite"],
+      "MCH": ["mch", "peh", "patient-engagement-hub", "patient-engagement"],
+      "Smart Code": ["smart-code", "smartcode", "smartcoding", "smart-code-1-0"],
+      "PT": ["pt", "assurx-pt"],
+      "Comm Tracker": ["communication-tracker", "communcation-tracker", "comm-tracker"],
+      "Y-Navigator": ["y-navigator", "ynavigator"]
+    },
+    "Acute": {
+      "Optimix": ["optimix"],
+      "Polaris": ["polaris"],
+      "MatchPay": ["matchpay", "match-pay"]
+    },
+    "Scribing": {
+      "Scribble": ["scribble", "scribblenow", "scribble-now", "scribble-3-0", "scribble-mobile", "scribble-wfm", "scribble-ai-ml", "scribble-neo", "scrbble"],
+      "CUP": ["cup"]
+    },
+    "Platform": {
+      "Care Enablement Platform": ["cep", "care-enablement-platform"],
+      "Rhapsody": ["rhapsody"],
+      "API Hub": ["api-hub", "apihub"],
+      "MDP": ["mdp"]
+    },
+    "Tech Shared": {
+      "FinOps": ["finops"],
+      "PoCs": ["poc", "pocs"],
+      "DevOps Tools": ["devops", "devops-tools"],
+      "AI/ML": ["ai-ml", "aiml"]
+    }
+  },
+  "feature_clusters": {
+    "Clinical-Support": ["stacks", "stacks-1-0", "stacks-2-0", "stack-2-0", "stacks-plus", "assurx", "assurx-pt", "pt", "communication-tracker", "communcation-tracker",
+                         "smart-code", "smartcode", "smartcoding", "smart-code-1-0", "dcfc", "assessment-tool", "scribble", "scribblenow", "scribble-now",
+                         "scribble-3-0", "scribble-mobile", "scribble-wfm", "cup"],
+    "Revenue-Optimization": ["dashboard", "tableau-dashboard", "production-tracker", "optimix", "eve", "matchpay", "quality-audit", "know-your-patient", "recon",
+                             "trainer-utilization", "trainer-utlization", "evelite", "y-navigator", "ynavigator", "payer-knowledge-base", "rhapsody"],
+    "Tech Shared": ["finops", "poc", "pocs", "devops", "devops-tools", "ai-ml", "aiml"],
+    "Platform": ["platform"]
+  },
+  "cluster_label_aliases": {
+    "Clinical-Support": ["clinical-support", "clinicalsupport", "clincal-support"],
+    "Revenue-Optimization": ["revenue-optimization", "reveneue-optimization", "revenueoptimization"],
+    "Tech Shared": ["tech-shared", "techshared"],
+    "Platform": ["platform", "patform"]
+  }
+}
