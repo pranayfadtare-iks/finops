@@ -21,9 +21,10 @@ from plotly.subplots import make_subplots
 from rightsizing import STATUS_ORDER
 
 # --------------------------------------------------------------------------- palette
-FONT = "Inter, Segoe UI, Roboto, Helvetica, Arial, sans-serif"
-INK, TEXT, MUTED, GRID, CARD = "#0F172A", "#334155", "#64748B", "#EEF2F7", "#FFFFFF"
-CPU_COLOR, RAM_COLOR = "#3B82F6", "#06B6D4"
+# Tokens match the app design system (app.py): Inter, ink #0F1B3D, muted #64748B, border #E6ECF5, primary #2563EB.
+FONT = "Inter, system-ui, -apple-system, Segoe UI, sans-serif"
+INK, TEXT, MUTED, GRID, CARD = "#0F1B3D", "#475569", "#64748B", "#EDF1F7", "#FFFFFF"
+CPU_COLOR, RAM_COLOR = "#2563EB", "#06B6D4"
 CURRENT_COLOR, RECOMMENDED_COLOR, USED_COLOR = "#94A3B8", "#10B981", "#F59E0B"
 
 STATUS_COLORS = {
@@ -53,52 +54,54 @@ def _rgba(hex_color, alpha):
 # --------------------------------------------------------------------------- shared look
 def finish(fig, title, subtitle="", height=380, legend=True):
     """Apply the common look: left-aligned title, one-line explainer, light grid, clean hover."""
-    top = 92 if subtitle else 62
+    top = 88 if subtitle else 58
     fig.update_layout(
         title=dict(text=f"<b>{title}</b>", x=0.012, xanchor="left", y=0.965, yanchor="top",
-                   font=dict(size=17, color=INK, family=FONT)),
+                   font=dict(size=15, color=INK, family=FONT)),
         height=height, margin=dict(l=16, r=22, t=top, b=16),
-        paper_bgcolor=CARD, plot_bgcolor=CARD,
+        paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
         font=dict(family=FONT, color=TEXT, size=12),
         showlegend=legend,
         legend=dict(orientation="h", yanchor="bottom", y=1.0, xanchor="right", x=1.0, bgcolor="rgba(0,0,0,0)",
-                    font=dict(size=12)),
-        hoverlabel=dict(bgcolor="white", bordercolor="#CBD5E1", font=dict(family=FONT, size=12, color=INK)),
+                    font=dict(size=12, color=TEXT)),
+        hoverlabel=dict(bgcolor="white", bordercolor="#E2E8F0", font=dict(family=FONT, size=13, color=INK)),
     )
     if subtitle:
-        fig.add_annotation(text=subtitle, xref="paper", yref="paper", x=0.0, y=1.0, yshift=34, xanchor="left",
-                           yanchor="bottom", showarrow=False, font=dict(size=12, color=MUTED, family=FONT))
-    fig.update_xaxes(showgrid=False, zeroline=False, linecolor="#E2E8F0", tickcolor="#E2E8F0")
-    fig.update_yaxes(gridcolor=GRID, zeroline=False, linecolor="rgba(0,0,0,0)")
+        fig.add_annotation(text=subtitle, xref="paper", yref="paper", x=0.0, y=1.0, yshift=32, xanchor="left",
+                           yanchor="bottom", showarrow=False, font=dict(size=12.5, color=MUTED, family=FONT))
+    fig.update_xaxes(showgrid=False, zeroline=False, showline=False, tickfont=dict(color=MUTED, size=11))
+    fig.update_yaxes(gridcolor=GRID, zeroline=False, showline=False, tickfont=dict(color=MUTED, size=11))
     return fig
 
 
 # --------------------------------------------------------------------------- KPI cards
-def kpi_card(label, value, sub="", accent="#3B82F6", tooltip=""):
-    """HTML for one KPI card (styled by the .kpi CSS in the app)."""
-    return (f'<div class="kpi" style="--accent:{accent}" title="{html.escape(tooltip, quote=True)}">'
-            f'<div class="kpi-label">{html.escape(label)}</div>'
-            f'<div class="kpi-value">{html.escape(str(value))}</div>'
-            f'<div class="kpi-sub">{html.escape(sub) if sub else "&nbsp;"}</div></div>')
+def kpi_card(label, value, sub="", accent="#2563EB", tooltip=""):
+    """HTML for one KPI card (styled by KPI_CSS; same look as the app's KPI cards, with a coloured accent dot)."""
+    return (f'<div class="vkpi" style="--accent:{accent}" title="{html.escape(tooltip, quote=True)}">'
+            f'<div class="vkpi-label"><i></i>{html.escape(label)}</div>'
+            f'<div class="vkpi-value">{html.escape(str(value))}</div>'
+            f'<div class="vkpi-sub">{html.escape(sub) if sub else "&nbsp;"}</div></div>')
 
 
+# Classes are prefixed "vkpi" so they never clash with the app's own .kpi-card / .kpi-label styles.
 KPI_CSS = """
 <style>
-.kpi{background:#fff;border:1px solid #e6eaf2;border-left:6px solid var(--accent);border-radius:14px;padding:14px 16px 12px;
-     box-shadow:0 2px 10px rgba(15,23,42,.05);min-height:104px}
-.kpi-label{color:#64748B;font-size:.78rem;font-weight:650;letter-spacing:.02em;text-transform:uppercase}
-.kpi-value{color:#0F172A;font-size:1.65rem;font-weight:780;line-height:1.25;margin-top:2px;letter-spacing:-.02em}
-.kpi-sub{color:#64748B;font-size:.8rem;margin-top:2px}
-[data-testid="stPlotlyChart"]{background:#fff;border:1px solid #e6eaf2;border-radius:16px;padding:6px 8px;
-     box-shadow:0 2px 10px rgba(15,23,42,.045)}
-.stTabs [data-baseweb="tab-list"]{gap:6px;border-bottom:1px solid #e2e8f0}
-.stTabs [data-baseweb="tab"]{font-weight:650;font-size:1rem;padding:10px 16px;border-radius:10px 10px 0 0}
-.stTabs [aria-selected="true"]{color:#1D4ED8}
+.vkpi{background:#FFFFFF;border:1px solid #E6ECF5;border-radius:13px;padding:13px 14px 11px;min-height:92px;
+      box-shadow:0 1px 2px rgba(15,27,61,.04),0 8px 20px rgba(37,99,235,.05);overflow:hidden}
+.vkpi-label{display:flex;align-items:center;gap:7px;color:#475569;font-size:12px;font-weight:500;
+            white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.vkpi-label i{flex:0 0 8px;width:8px;height:8px;border-radius:50%;background:var(--accent);
+              box-shadow:0 0 0 3px color-mix(in srgb,var(--accent) 18%,transparent)}
+.vkpi-value{color:#0F1B3D;font-size:19px;font-weight:700;line-height:1.2;margin-top:7px;letter-spacing:-.02em;
+            font-variant-numeric:tabular-nums;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.vkpi-sub{color:#64748B;font-size:11.5px;font-weight:500;margin-top:3px;line-height:1.3}
+[data-testid="stPlotlyChart"]:not([class*="st-key-card_"] [data-testid="stPlotlyChart"]){background:#FFFFFF;border:1px solid #E6ECF5;border-radius:18px;padding:8px 10px;
+     box-shadow:0 1px 2px rgba(15,27,61,.04),0 10px 28px rgba(37,99,235,.05);margin-bottom:16px}
 .legend-row{display:flex;flex-wrap:wrap;gap:10px;margin:2px 0 12px}
-.pill{display:inline-flex;align-items:center;gap:6px;padding:4px 11px;border-radius:999px;font-size:.8rem;font-weight:650}
+.pill{display:inline-flex;align-items:center;gap:6px;padding:4px 11px;border-radius:999px;font-size:12px;font-weight:600}
 .pill i{width:9px;height:9px;border-radius:50%;display:inline-block}
-.sec-title{font-size:1.2rem;font-weight:780;color:#0F172A;margin:20px 0 4px;letter-spacing:-.01em}
-.sec-sub{color:#64748B;font-size:.88rem;margin:0 0 12px}
+.sec-title{font-size:15px;font-weight:600;color:#0F1B3D;margin:18px 0 4px;letter-spacing:-.005em}
+.sec-sub{color:#64748B;font-size:12.5px;margin:0 0 12px}
 </style>
 """
 
@@ -343,7 +346,7 @@ def gauge(value, title, target, high, color):
                    bgcolor="white", borderwidth=0,
                    steps=[dict(range=[0, target], color="#E0F2FE"), dict(range=[target, high], color="#D1FAE5"), dict(range=[high, 100], color="#FEE2E2")],
                    threshold=dict(line=dict(color=INK, width=3), thickness=0.85, value=target))))
-    fig.update_layout(height=270, margin=dict(l=24, r=24, t=60, b=10), paper_bgcolor=CARD, font=dict(family=FONT))
+    fig.update_layout(height=270, margin=dict(l=24, r=24, t=60, b=10), paper_bgcolor="rgba(0,0,0,0)", font=dict(family=FONT))
     return fig
 
 

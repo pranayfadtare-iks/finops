@@ -1,6 +1,20 @@
-# Credentials (service account keys)
+# Credentials (service account keys) - never commit
 *.json
 !bu_mapping.json
+service-account.json
+iksgcp.json
+*.key.json
 
-# Virtual environment
+# Python
 .venv/
+__pycache__/
+*.pyc
+
+# Logs
+finops.log
+
+# Local data cache
+.finops_cache/
+
+# Real owner mapping (contains people's emails) - keep owner_map.example.csv as the template
+owner_map.csv
