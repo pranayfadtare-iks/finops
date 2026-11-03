@@ -88,8 +88,8 @@ SVG_CHECK = _icon('<path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline point
 SVG_USERS = _icon('<path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/>', "#0891B2")
 SVG_SERVER = _icon('<rect x="2" y="3" width="20" height="8" rx="2"/><rect x="2" y="13" width="20" height="8" rx="2"/><line x1="6" y1="7" x2="6.01" y2="7"/><line x1="6" y1="17" x2="6.01" y2="17"/>', "#8B5CF6")
 
-LEADERSHIP_PAGE = "Leadership Dashboard"
-NAV_ITEMS = [LEADERSHIP_PAGE, "Overview", "CPU & RAM", "Cost breakdowns", "Resource explorer", "Data & export"]
+LEADERSHIP_PAGE = "Leadership Dashboard"   # used by the page checks below; must match the first NAV_ITEMS entry
+NAV_ITEMS = ["Leadership Dashboard", "Overview", "CPU & RAM", "Cost breakdowns", "Resource explorer", "Data & export"]
 PERIODS = {"Last 7 days": 7, "Last 30 days": 30, "Last 60 days": 60, "Last 90 days": 90, "Last 180 days": 180}
 
 # ─── CSS — Global design system ──────────────────────────────────────────────
