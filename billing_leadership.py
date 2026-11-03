@@ -1,4 +1,4 @@
-﻿"""Billing-driven leadership helpers, organised around business units: who spends what, what changed, and what to do about it.
+"""Billing-driven leadership helpers, organised around business units: who spends what, what changed, and what to do about it.
 
 Pure pandas / plotly / HTML strings: no Streamlit and no Google API calls, so everything here can be tested on its own.
 
@@ -61,12 +61,12 @@ PROD_VALUES = {"prod", "production", "prd", "live"}
 _KEY_OK = re.compile(r"^[A-Za-z0-9_.\-]+$")
 
 # colours: one validated categorical order; business units keep the plan's order so a unit is always the same colour
-BU_COLORS = ["#2a78d6", "#eb6834", "#1baf7a", "#eda100", "#6250d6", "#e87ba4", "#008300", "#e34948"]
+BU_COLORS = ["#2563EB", "#8B5CF6", "#10B981", "#F59E0B", "#EC4899", "#06B6D4", "#6366F1", "#F97316"]
 PIE_COLORS = BU_COLORS
-OTHER_COLOR, UNLABELED_COLOR, UNMAPPED_COLOR = "#C9D3E0", "#94A3B8", "#B8A88A"
-BASE_COLOR, UP_COLOR, DOWN_COLOR = "#2a78d6", "#d03b3b", "#0ca30c"
-GOOD_COLOR, WARN_COLOR, BAD_COLOR = "#0ca30c", "#eda100", "#d03b3b"
-HEAT_SCALE = [[0.0, "#cde2fb"], [0.35, "#86b6ef"], [0.7, "#2a78d6"], [1.0, "#0d366b"]]   # one hue, light -> dark
+OTHER_COLOR, UNLABELED_COLOR, UNMAPPED_COLOR = "#CBD5E1", "#94A3B8", "#B8A88A"
+BASE_COLOR, UP_COLOR, DOWN_COLOR = "#2563EB", "#EF4444", "#10B981"
+GOOD_COLOR, WARN_COLOR, BAD_COLOR = "#10B981", "#F59E0B", "#EF4444"
+HEAT_SCALE = [[0.0, "#F4F8FF"], [0.25, "#DCE9FD"], [0.5, "#93C5FD"], [0.75, "#3B82F6"], [1.0, "#1D4ED8"]]   # one hue, light -> dark
 SPIKE_PCT, SPIKE_SHARE = 0.25, 0.02   # an "increase" insight needs +25% and at least 2% of total spend
 PIE_HEIGHT = 360
 
@@ -474,29 +474,30 @@ def insight_card(item):
 # --------------------------------------------------------------------------- HTML: header, sections, KPI strip
 LEAD_CSS = """
 <style>
-.lhead{display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:6px;padding:6px 2px 12px;border-bottom:1px solid #e3e8ef;margin:-6px 0 6px}
-.lhead b{font-size:1.15rem;letter-spacing:-.01em;color:#0F172A}
-.lhead span{color:#64748B;font-size:.85rem}
-.lsec{display:flex;align-items:baseline;gap:10px;flex-wrap:wrap;margin:28px 0 10px}
-.lsec b{font-size:1.08rem;color:#0F172A;letter-spacing:-.01em}
-.lsec span{color:#64748B;font-size:.86rem}
+.lhead{display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:6px;padding:6px 2px 12px;border-bottom:1px solid #E6ECF5;margin:-6px 0 6px}
+.lhead b{font-size:16px;font-weight:700;letter-spacing:-.01em;color:#0F1B3D}
+.lhead span{color:#64748B;font-size:12.5px}
+.lsec{display:flex;align-items:baseline;gap:10px;flex-wrap:wrap;margin:24px 0 10px}
+.lsec b{font-size:16px;font-weight:700;color:#0F1B3D;letter-spacing:-.01em}
+.lsec span{color:#64748B;font-size:12.5px}
 .kgrid{display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:12px;margin:6px 0 4px}
-.ktile{background:#fff;border:1px solid #e3e8ef;border-radius:12px;padding:14px 16px 12px;box-shadow:0 1px 3px rgba(15,23,42,.05);border-top:4px solid var(--accent)}
-.ktile-l{font-size:.72rem;font-weight:700;letter-spacing:.05em;text-transform:uppercase;color:#64748B}
-.ktile-v{font-size:1.75rem;font-weight:720;color:#0F172A;line-height:1.2;margin-top:4px;letter-spacing:-.02em}
-.ktile-d{font-size:.84rem;margin-top:2px;color:#475569}
-.ktile-f{font-size:.76rem;color:#64748B;margin-top:8px;padding-top:7px;border-top:1px dashed #e3e8ef}
-.ins{background:#fff;border:1px solid #e3e8ef;border-left:5px solid var(--accent);border-radius:10px;padding:12px 14px 10px;
-     box-shadow:0 1px 2px rgba(15,23,42,.04);min-height:128px;margin-bottom:6px}
-.ins-tag{font-size:.72rem;font-weight:750;letter-spacing:.04em;text-transform:uppercase;color:var(--accent)}
-.ins-title{color:#0F172A;font-size:1rem;font-weight:700;line-height:1.3;margin:4px 0}
-.ins-detail{color:#64748B;font-size:.83rem;line-height:1.38}
-.story{background:#fff;border:1px solid #e3e8ef;border-radius:10px;padding:12px 16px;color:#334155;font-size:.95rem;line-height:1.5;margin:4px 0 12px}
-.story b{color:#0F172A}
+.ktile{background:#FFFFFF;border:1px solid #E6ECF5;border-radius:14px;padding:14px 16px 12px;box-shadow:0 1px 2px rgba(15,27,61,.04),0 8px 20px rgba(37,99,235,.05);border-top:4px solid var(--accent)}
+.ktile-l{font-size:11px;font-weight:600;letter-spacing:.05em;text-transform:uppercase;color:#64748B}
+.ktile-v{font-size:20px;font-weight:700;color:#0F1B3D;line-height:1.2;margin-top:4px;letter-spacing:-.02em;font-variant-numeric:tabular-nums}
+.ktile-d{font-size:12.5px;margin-top:2px;color:#475569}
+.ktile-f{font-size:11.5px;color:#64748B;margin-top:8px;padding-top:7px;border-top:1px dashed #E6ECF5}
+.ins{background:#FFFFFF;border:1px solid #E6ECF5;border-left:5px solid var(--accent);border-radius:14px;padding:12px 14px 10px;
+     box-shadow:0 1px 2px rgba(15,27,61,.04),0 8px 20px rgba(37,99,235,.05);min-height:128px;margin-bottom:6px}
+.ins-tag{font-size:11px;font-weight:700;letter-spacing:.04em;text-transform:uppercase;color:var(--accent)}
+.ins-title{color:#0F1B3D;font-size:14.5px;font-weight:600;line-height:1.3;margin:4px 0}
+.ins-detail{color:#64748B;font-size:12.5px;line-height:1.4}
+.story{background:#FFFFFF;border:1px solid #E6ECF5;border-radius:16px;padding:14px 18px;color:#334155;font-size:13.5px;line-height:1.55;margin:4px 0 14px;
+       box-shadow:0 1px 2px rgba(15,27,61,.04),0 8px 20px rgba(37,99,235,.05)}
+.story b{color:#0F1B3D;font-weight:600}
 .chips{display:flex;flex-wrap:wrap;gap:6px;margin:0 0 10px}
-.chip{display:inline-flex;align-items:center;gap:6px;padding:3px 10px;border-radius:999px;background:#fff;border:1px solid #e3e8ef;font-size:.8rem;color:#334155}
+.chip{display:inline-flex;align-items:center;gap:6px;padding:4px 11px;border-radius:999px;background:#FFFFFF;border:1px solid #E6ECF5;font-size:12px;color:#334155;font-weight:500}
 .chip i{width:9px;height:9px;border-radius:50%;display:inline-block}
-.up{color:#d03b3b;font-weight:650}.down{color:#0a7d0a;font-weight:650}
+.up{color:#DC2626;font-weight:600}.down{color:#16A34A;font-weight:600}
 </style>
 """
 
@@ -887,59 +888,61 @@ def tagging_trend(daily, end_day):
 EXEC_CSS = """
 <style>
 .xhero{position:relative;overflow:hidden;display:flex;justify-content:space-between;align-items:center;gap:24px;
-       padding:22px 28px;border-radius:16px;color:#fff;margin:0 0 14px;
-       background:linear-gradient(115deg,#0f1f3d 0%,#14365a 52%,#0f7c86 100%)}
+       padding:22px 26px;border-radius:18px;color:#FFFFFF;margin:0 0 14px;
+       background:linear-gradient(115deg,#0F1B3D 0%,#1E3A8A 55%,#2563EB 100%);
+       box-shadow:0 1px 2px rgba(15,27,61,.06),0 12px 32px rgba(37,99,235,.16)}
 .xhero:after{content:"";position:absolute;right:-90px;top:-150px;width:420px;height:420px;border-radius:50%;
-             border:70px solid rgba(255,255,255,.05);pointer-events:none}
-.xhero-eye{font-size:.7rem;font-weight:800;letter-spacing:.14em;text-transform:uppercase;color:#9fe3e0}
-.xhero h1{margin:6px 0 6px;font-size:1.7rem;font-weight:780;letter-spacing:-.02em;color:#fff;line-height:1.2;padding:0}
-.xhero p{margin:0;color:#d4e3f2;font-size:.92rem;max-width:720px;line-height:1.45}
+             border:70px solid rgba(255,255,255,.06);pointer-events:none}
+.xhero-eye{font-size:11px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:#93C5FD}
+.xhero h1{margin:6px 0 6px;font-size:24px;font-weight:700;letter-spacing:-.02em;color:#FFFFFF;line-height:1.2;padding:0}
+.xhero p{margin:0;color:#DBEAFE;font-size:13.5px;max-width:720px;line-height:1.45}
 .xhero>div:first-child{flex:1;min-width:0}
 .xhero-r{flex:none;text-align:right;z-index:1}
-.xhero-r b{display:block;font-size:2rem;font-weight:780;letter-spacing:-.02em}
-.xhero-r span{font-size:.8rem;color:#9fe3e0}
-.xview{font-size:.72rem;font-weight:800;letter-spacing:.1em;color:#64748B;padding-top:9px}
-.xnote{font-size:.76rem;color:#94A3B8;text-align:right;padding-top:10px}
-.xkpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px;margin:4px 0 14px}
-.xkpi{background:#fff;border:1px solid #e6eaf2;border-radius:16px;padding:16px 18px 14px;box-shadow:0 2px 10px rgba(15,23,42,.045)}
+.xhero-r b{display:block;font-size:28px;font-weight:700;letter-spacing:-.02em;font-variant-numeric:tabular-nums}
+.xhero-r span{font-size:12px;color:#93C5FD;font-weight:500}
+.xview{font-size:11px;font-weight:700;letter-spacing:.08em;color:#64748B;padding-top:9px}
+.xnote{font-size:12px;color:#94A3B8;text-align:right;padding-top:10px}
+.xkpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:12px;margin:4px 0 16px}
+.xkpi{background:#FFFFFF;border:1px solid #E6ECF5;border-radius:14px;padding:14px 16px 12px;
+      box-shadow:0 1px 2px rgba(15,27,61,.04),0 8px 20px rgba(37,99,235,.05)}
 .xkpi-top{display:flex;justify-content:space-between;align-items:flex-start;gap:8px}
-.xkpi-l{font-size:.8rem;color:#475569}
-.xkpi-i{display:inline-flex;align-items:center;justify-content:center;min-width:26px;height:26px;border-radius:7px;font-size:.85rem;font-weight:700;
+.xkpi-l{font-size:12px;font-weight:500;color:#475569}
+.xkpi-i{display:inline-flex;align-items:center;justify-content:center;min-width:30px;height:30px;border-radius:9px;font-size:13.5px;font-weight:700;
         color:var(--tone);background:color-mix(in srgb,var(--tone) 12%,white)}
-.xkpi-v{font-size:1.6rem;font-weight:780;color:#0F172A;letter-spacing:-.02em;margin:10px 0 4px;line-height:1.15}
-.xkpi-f{font-size:.76rem;color:#64748B}
-.xcard{background:#fff;border:1px solid #e6eaf2;border-radius:16px;padding:16px 18px;box-shadow:0 2px 10px rgba(15,23,42,.045);
+.xkpi-v{font-size:20px;font-weight:700;color:#0F1B3D;letter-spacing:-.02em;margin:8px 0 4px;line-height:1.15;font-variant-numeric:tabular-nums}
+.xkpi-f{font-size:11.5px;color:#64748B;font-weight:500;line-height:1.3}
+.xcard{background:#FFFFFF;border:1px solid #E6ECF5;border-radius:18px;padding:20px 22px 16px 22px;
+       box-shadow:0 1px 2px rgba(15,27,61,.04),0 10px 28px rgba(37,99,235,.05);
        box-sizing:border-box;overflow:auto;margin-bottom:16px}
-.xcard h4{margin:0;padding:0;font-size:.98rem;font-weight:720;color:#0F172A}
-.xcard .xsub{font-size:.78rem;color:#64748B;margin:3px 0 14px}
-.xbar{display:grid;grid-template-columns:minmax(80px,1fr) 1.6fr auto;align-items:center;gap:10px;margin:0 0 9px;font-size:.84rem}
-.xbar b{color:#0F172A;font-weight:650;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.xbar .track{background:#EEF2F7;border-radius:999px;height:8px;overflow:hidden}
-.xbar .fill{height:8px;border-radius:999px}
-.xbar .amt{font-weight:700;color:#0F172A;text-align:right;white-space:nowrap}
-.xbar .amt small{display:block;font-weight:600;font-size:.72rem}
-.xopp{display:flex;justify-content:space-between;align-items:center;gap:12px;padding:9px 0;border-bottom:1px solid #EEF2F7}
+.xcard h4{margin:0;padding:0;font-size:15px;font-weight:600;color:#0F1B3D;letter-spacing:-.005em}
+.xcard .xsub{font-size:12.5px;color:#64748B;margin:3px 0 14px}
+.xbar{display:grid;grid-template-columns:minmax(80px,1fr) 1.6fr auto;align-items:center;gap:12px;margin:0 0 9px;font-size:13px}
+.xbar b{color:#334155;font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.xbar .track{background:#EEF3FB;border-radius:999px;height:10px;overflow:hidden}
+.xbar .fill{height:10px;border-radius:999px}
+.xbar .amt{font-weight:600;color:#0F1B3D;text-align:right;white-space:nowrap;font-variant-numeric:tabular-nums}
+.xbar .amt small{display:block;font-weight:600;font-size:11px}
+.xopp{display:flex;justify-content:space-between;align-items:center;gap:12px;padding:10px 0;border-bottom:1px solid #EDF1F7}
 .xopp:last-child{border-bottom:none}
-.xopp b{display:block;font-size:.86rem;font-weight:620;color:#0F172A}
-.xopp span{font-size:.74rem;color:#64748B}
-.xopp .save{font-weight:750;color:#0a7d0a;font-size:.92rem;white-space:nowrap}
-.xtable{width:100%;border-collapse:collapse;font-size:.84rem}
-.xtable th{font-size:.66rem;font-weight:800;letter-spacing:.08em;text-transform:uppercase;color:#64748B;text-align:left;padding:6px 8px;border-bottom:1px solid #E2E8F0}
-.xtable td{padding:9px 8px;border-bottom:1px solid #EEF2F7;color:#0F172A;vertical-align:middle}
-.xtable td small{display:block;color:#64748B;font-size:.72rem}
-.xtable td.num{text-align:right;white-space:nowrap}.xtable th.num{text-align:right}
-.badge{display:inline-block;padding:2px 9px;border-radius:999px;font-size:.7rem;font-weight:700;white-space:nowrap}
-.xact{display:flex;gap:12px;padding:10px 0;border-bottom:1px solid #EEF2F7}
+.xopp b{display:block;font-size:13.5px;font-weight:600;color:#0F1B3D}
+.xopp span{font-size:12px;color:#64748B}
+.xopp .save{font-weight:700;color:#16A34A;font-size:14px;white-space:nowrap;font-variant-numeric:tabular-nums}
+.xtable{width:100%;border-collapse:collapse;font-size:13px}
+.xtable th{font-size:11px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:#64748B;text-align:left;padding:7px 8px;border-bottom:1px solid #E6ECF5}
+.xtable td{padding:9px 8px;border-bottom:1px solid #EDF1F7;color:#0F1B3D;vertical-align:middle}
+.xtable td small{display:block;color:#64748B;font-size:11.5px}
+.xtable td.num{text-align:right;white-space:nowrap;font-variant-numeric:tabular-nums}.xtable th.num{text-align:right}
+.badge{display:inline-block;padding:3px 10px;border-radius:999px;font-size:11px;font-weight:600;white-space:nowrap}
+.xact{display:flex;gap:12px;padding:10px 0;border-bottom:1px solid #EDF1F7}
 .xact:last-child{border-bottom:none}
-.xact .n{flex:none;width:24px;height:24px;border-radius:7px;background:#EEF4FF;color:#1D4ED8;font-weight:800;font-size:.78rem;
+.xact .n{flex:none;width:24px;height:24px;border-radius:8px;background:#EAF1FE;color:#2563EB;font-weight:700;font-size:12px;
          display:flex;align-items:center;justify-content:center}
-.xact b{display:block;font-size:.88rem;color:#0F172A;font-weight:680}
-.xact span{font-size:.76rem;color:#64748B;line-height:1.35}
-.xempty{color:#64748B;font-size:.84rem;padding:18px 0;text-align:center}
-[data-testid="stPlotlyChart"]{margin-bottom:16px}
+.xact b{display:block;font-size:13.5px;color:#0F1B3D;font-weight:600}
+.xact span{font-size:12px;color:#64748B;line-height:1.4}
+.xempty{color:#64748B;font-size:13px;padding:18px 0;text-align:center}
 </style>
 """
-CHART_CARD = 14   # border + padding the app CSS puts around a Plotly chart; HTML cards add it to line up with charts
+CHART_CARD = 18   # border + padding the app CSS puts around a Plotly chart; HTML cards add it to line up with charts
 
 
 def exec_hero(total, caption, scope):
@@ -951,7 +954,7 @@ def exec_hero(total, caption, scope):
             f'<div class="xhero-r"><b>{html.escape(total)}</b><span>{html.escape(caption)}</span></div></div>')
 
 
-def exec_kpi(label, value, foot, icon, tone=BASE_COLOR, value_color="#0F172A"):
+def exec_kpi(label, value, foot, icon, tone=BASE_COLOR, value_color="#0F1B3D"):
     """One executive KPI card (icon chip top right). ``foot`` is trusted HTML."""
     return (f'<div class="xkpi"><div class="xkpi-top"><span class="xkpi-l">{html.escape(label)}</span>'
             f'<span class="xkpi-i" style="--tone:{tone}">{html.escape(icon)}</span></div>'
@@ -974,15 +977,15 @@ def card_layout(fig, title, subtitle="", height=380, legend=False):
     fig.update_layout(
         title=dict(text=f"<b>{html.escape(title)}</b>", xref="container", x=0, xanchor="left", yref="container", y=1, yanchor="top",
                    pad=dict(t=14, l=16), font=dict(size=15, color=INK, family=FONT)),
-        height=height, margin=dict(l=16, r=16, t=top, b=16), paper_bgcolor="#FFFFFF", plot_bgcolor="#FFFFFF",
+        height=height, margin=dict(l=16, r=16, t=top, b=16), paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
         font=dict(family=FONT, color=TEXT, size=12), showlegend=legend,
-        legend=dict(orientation="h", x=1, xanchor="right", y=1.02, yanchor="bottom", bgcolor="rgba(0,0,0,0)", font=dict(size=11)),
-        hoverlabel=dict(bgcolor="white", bordercolor="#CBD5E1", font=dict(family=FONT, size=12, color=INK)))
+        legend=dict(orientation="h", x=1, xanchor="right", y=1.02, yanchor="bottom", bgcolor="rgba(0,0,0,0)", font=dict(size=12, color=TEXT)),
+        hoverlabel=dict(bgcolor="white", bordercolor="#E2E8F0", font=dict(family=FONT, size=13, color=INK)))
     if subtitle:
         fig.add_annotation(text=html.escape(subtitle), xref="paper", yref="paper", x=0, y=1, yshift=top - 52, xanchor="left", yanchor="bottom",
-                           showarrow=False, font=dict(size=12, color="#64748B", family=FONT))
-    fig.update_xaxes(showgrid=False, zeroline=False, linecolor="#E2E8F0", tickcolor="#E2E8F0")
-    fig.update_yaxes(gridcolor="#EEF2F7", zeroline=False, linecolor="rgba(0,0,0,0)")
+                           showarrow=False, font=dict(size=12.5, color="#64748B", family=FONT))
+    fig.update_xaxes(showgrid=False, zeroline=False, showline=False, tickfont=dict(color="#64748B", size=11))
+    fig.update_yaxes(gridcolor="#EDF1F7", zeroline=False, showline=False, tickfont=dict(color="#64748B", size=11))
     return fig
 
 
@@ -1001,7 +1004,7 @@ def period_trend(daily, start_day, end_day, fmt_money, height=380):
     labels = [(start + pd.Timedelta(days=i * step)).strftime("%d %b") for i in range(n)]
     prev_labels = [(prev_start + pd.Timedelta(days=i * step)).strftime("%d %b") for i in range(n)]
     fig = go.Figure()
-    fig.add_trace(go.Bar(x=labels, y=prev.values, name="Previous", marker=dict(color="#9ec5f4", cornerradius=4),
+    fig.add_trace(go.Bar(x=labels, y=prev.values, name="Previous", marker=dict(color="#A9C8F7", cornerradius=4),
                          customdata=np.column_stack([prev_labels, prev.map(fmt_money).values]),
                          hovertemplate="Previous period · from %{customdata[0]}<br><b>%{customdata[1]}</b><extra></extra>"))
     fig.add_trace(go.Bar(x=labels, y=cur.values, name="Latest", marker=dict(color=BASE_COLOR, cornerradius=4),
