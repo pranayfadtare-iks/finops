@@ -507,7 +507,8 @@ def header_bar(title, note=""):
 
 
 def section(title, note=""):
-    return f'<div class="lsec"><b>{html.escape(title)}</b>{f"<span>{html.escape(note)}</span>" if note else ""}</div>'
+    return (f'<div class="sec-title">{html.escape(title)}</div>'
+            + (f'<div class="sec-sub">{html.escape(note[:1].upper() + note[1:])}</div>' if note else ""))
 
 
 def bu_chips(colors):
@@ -608,16 +609,15 @@ def _pie(slices, title, subtitle, fmt_money, clickable, height=PIE_HEIGHT):
     legend = [f"{n}  {s:.0%}" for n, s in zip(names, slices["share"])]
     change = [arrow_text(r["delta"], r["delta_pct"], fmt_money) if r["prev"] > 0 else "new" for _, r in slices.iterrows()]
     fig = go.Figure(go.Pie(
-        labels=legend, values=slices["cost"], sort=False, direction="clockwise", hole=0.58,
-        marker=dict(colors=slices["color"].tolist(), line=dict(color="white", width=2)),
-        text=[f"{s:.0%}" if s >= 0.06 else "" for s in slices["share"]], textinfo="text", textposition="inside",
-        insidetextorientation="horizontal", textfont=dict(color="white", size=12, family=FONT),
+        labels=legend, values=slices["cost"], sort=False, direction="clockwise", hole=0.68,
+        marker=dict(colors=slices["color"].tolist(), line=dict(color="white", width=3)),
+        textinfo="none",   # thin Overview-style ring: shares are in the legend
         customdata=np.column_stack([slices["label"].values, slices["cost"].map(fmt_money).values, slices["prev"].map(fmt_money).values, change]),
         hovertemplate=("<b>%{customdata[0]}</b><br>Net cost: <b>%{customdata[1]}</b> · %{percent}<br>Previous period: %{customdata[2]}"
                        "<br>Change: %{customdata[3]}" + ("<br><i>Click for details</i>" if clickable else "") + "<extra></extra>"),
         domain=dict(x=[0.0, 0.52], y=[0.0, 1.0])))
     fig.add_annotation(text=f"<b>{fmt_money(slices['cost'].sum())}</b><br><span style='font-size:11px;color:#64748B'>total spend</span>",
-                       x=0.26, y=0.5, xref="paper", yref="paper", showarrow=False, font=dict(size=16, color=INK, family=FONT))
+                       x=0.26, y=0.5, xref="paper", yref="paper", showarrow=False, font=dict(size=14, color=INK, family=FONT))
     card_layout(fig, title, subtitle, height, legend=True)
     fig.update_layout(legend=dict(orientation="v", x=0.58, y=0.5, xanchor="left", yanchor="middle", font=dict(size=12, color=TEXT),
                                   itemclick=False, itemdoubleclick=False, tracegroupgap=6))
@@ -633,6 +633,31 @@ def spend_pie(rows, by, fmt_money, title=None, subtitle=None, top=8, color_map=N
                subtitle if subtitle is not None else ("Share of net cost · click a slice for details." if clickable else "Share of net cost."),
                fmt_money, clickable, height)
     return fig, [slices["key"].tolist()], [k for k in slices["key"] if k is not None]
+
+
+def spend_donut(rows, by, fmt_money, top=6, color_map=None, clickable=True, height=300):
+    """Overview-style donut: thin ring with the total in the middle. The legend (dot, name, share) is drawn by the app beside it.
+
+    Returns (figure or None, lookup, options, legend). ``lookup`` / ``options`` work like ``spend_pie``; ``legend`` is [(name, colour, share), ...]."""
+    slices = pie_slices(group_table(rows, by), by, top, color_map)
+    if slices.empty:
+        return None, [], [], []
+    change = [arrow_text(r["delta"], r["delta_pct"], fmt_money) if r["prev"] > 0 else "new" for _, r in slices.iterrows()]
+    fig = go.Figure(go.Pie(
+        labels=slices["label"].tolist(), values=slices["cost"].tolist(), sort=False, direction="clockwise", hole=0.72, showlegend=False,
+        marker=dict(colors=slices["color"].tolist(), line=dict(color="#FFFFFF", width=3)), textinfo="none",
+        customdata=np.column_stack([slices["label"].values, slices["cost"].map(fmt_money).values, slices["prev"].map(fmt_money).values, change]),
+        hovertemplate=("<b>%{customdata[0]}</b><br>Net cost: <b>%{customdata[1]}</b> · %{percent}<br>Previous period: %{customdata[2]}"
+                       "<br>Change: %{customdata[3]}" + ("<br><i>Click for details</i>" if clickable else "") + "<extra></extra>")))
+    fig.add_annotation(text=f"<b>{html.escape(fmt_money(slices['cost'].sum()))}</b>", x=0.5, y=0.54, xref="paper", yref="paper",
+                       showarrow=False, font=dict(size=19, color=INK, family=FONT))
+    fig.add_annotation(text="Total spend", x=0.5, y=0.43, xref="paper", yref="paper", showarrow=False,
+                       font=dict(size=12, color="#64748B", family=FONT))
+    fig.update_layout(height=height, margin=dict(l=0, r=0, t=0, b=0), paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
+                      font=dict(family=FONT, color=TEXT, size=12), showlegend=False,
+                      hoverlabel=dict(bgcolor="white", bordercolor="#E2E8F0", font=dict(family=FONT, size=13, color=INK)))
+    legend = [(r["label"], r["color"], float(r["share"])) for _, r in slices.iterrows()]
+    return fig, [slices["key"].tolist()], [k for k in slices["key"] if k is not None], legend
 
 
 def breakdown_pie(rows, by, fmt_money, top=8):
@@ -887,59 +912,70 @@ def tagging_trend(daily, end_day):
 # --------------------------------------------------------------------------- executive overview (hero, KPI cards, card panels)
 EXEC_CSS = """
 <style>
-.xhero{position:relative;overflow:hidden;display:flex;justify-content:space-between;align-items:center;gap:24px;
-       padding:22px 26px;border-radius:18px;color:#FFFFFF;margin:0 0 14px;
-       background:linear-gradient(115deg,#0F1B3D 0%,#1E3A8A 55%,#2563EB 100%);
-       box-shadow:0 1px 2px rgba(15,27,61,.06),0 12px 32px rgba(37,99,235,.16)}
-.xhero:after{content:"";position:absolute;right:-90px;top:-150px;width:420px;height:420px;border-radius:50%;
-             border:70px solid rgba(255,255,255,.06);pointer-events:none}
-.xhero-eye{font-size:11px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:#93C5FD}
-.xhero h1{margin:6px 0 6px;font-size:24px;font-weight:700;letter-spacing:-.02em;color:#FFFFFF;line-height:1.2;padding:0}
-.xhero p{margin:0;color:#DBEAFE;font-size:13.5px;max-width:720px;line-height:1.45}
-.xhero>div:first-child{flex:1;min-width:0}
-.xhero-r{flex:none;text-align:right;z-index:1}
-.xhero-r b{display:block;font-size:28px;font-weight:700;letter-spacing:-.02em;font-variant-numeric:tabular-nums}
-.xhero-r span{font-size:12px;color:#93C5FD;font-weight:500}
-.xview{font-size:11px;font-weight:700;letter-spacing:.08em;color:#64748B;padding-top:9px}
-.xnote{font-size:12px;color:#94A3B8;text-align:right;padding-top:10px}
-.xkpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:12px;margin:4px 0 16px}
-.xkpi{background:#FFFFFF;border:1px solid #E6ECF5;border-radius:14px;padding:14px 16px 12px;
-      box-shadow:0 1px 2px rgba(15,27,61,.04),0 8px 20px rgba(37,99,235,.05)}
-.xkpi-top{display:flex;justify-content:space-between;align-items:flex-start;gap:8px}
-.xkpi-l{font-size:12px;font-weight:500;color:#475569}
-.xkpi-i{display:inline-flex;align-items:center;justify-content:center;min-width:30px;height:30px;border-radius:9px;font-size:13.5px;font-weight:700;
-        color:var(--tone);background:color-mix(in srgb,var(--tone) 12%,white)}
-.xkpi-v{font-size:20px;font-weight:700;color:#0F1B3D;letter-spacing:-.02em;margin:8px 0 4px;line-height:1.15;font-variant-numeric:tabular-nums}
-.xkpi-f{font-size:11.5px;color:#64748B;font-weight:500;line-height:1.3}
-.xcard{background:#FFFFFF;border:1px solid #E6ECF5;border-radius:18px;padding:20px 22px 16px 22px;
+/* Leadership panels: same design tokens as the Overview page (Inter, #2563EB, #0F1B3D ink, #E6ECF5 borders, 18px cards).
+   Selectors start with .stApp so Streamlit's own markdown styles (headings, paragraphs, tables) cannot override them. */
+
+/* ── Panels (HTML twins of the Plotly chart cards) ── */
+.stApp .xcard{background:#FFFFFF;border:1px solid #E6ECF5;border-radius:18px;padding:20px 22px 16px 22px;
        box-shadow:0 1px 2px rgba(15,27,61,.04),0 10px 28px rgba(37,99,235,.05);
-       box-sizing:border-box;overflow:auto;margin-bottom:16px}
-.xcard h4{margin:0;padding:0;font-size:15px;font-weight:600;color:#0F1B3D;letter-spacing:-.005em}
-.xcard .xsub{font-size:12.5px;color:#64748B;margin:3px 0 14px}
-.xbar{display:grid;grid-template-columns:minmax(80px,1fr) 1.6fr auto;align-items:center;gap:12px;margin:0 0 9px;font-size:13px}
-.xbar b{color:#334155;font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.xbar .track{background:#EEF3FB;border-radius:999px;height:10px;overflow:hidden}
-.xbar .fill{height:10px;border-radius:999px}
-.xbar .amt{font-weight:600;color:#0F1B3D;text-align:right;white-space:nowrap;font-variant-numeric:tabular-nums}
-.xbar .amt small{display:block;font-weight:600;font-size:11px}
-.xopp{display:flex;justify-content:space-between;align-items:center;gap:12px;padding:10px 0;border-bottom:1px solid #EDF1F7}
-.xopp:last-child{border-bottom:none}
-.xopp b{display:block;font-size:13.5px;font-weight:600;color:#0F1B3D}
-.xopp span{font-size:12px;color:#64748B}
-.xopp .save{font-weight:700;color:#16A34A;font-size:14px;white-space:nowrap;font-variant-numeric:tabular-nums}
-.xtable{width:100%;border-collapse:collapse;font-size:13px}
-.xtable th{font-size:11px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:#64748B;text-align:left;padding:7px 8px;border-bottom:1px solid #E6ECF5}
-.xtable td{padding:9px 8px;border-bottom:1px solid #EDF1F7;color:#0F1B3D;vertical-align:middle}
-.xtable td small{display:block;color:#64748B;font-size:11.5px}
-.xtable td.num{text-align:right;white-space:nowrap;font-variant-numeric:tabular-nums}.xtable th.num{text-align:right}
-.badge{display:inline-block;padding:3px 10px;border-radius:999px;font-size:11px;font-weight:600;white-space:nowrap}
-.xact{display:flex;gap:12px;padding:10px 0;border-bottom:1px solid #EDF1F7}
-.xact:last-child{border-bottom:none}
-.xact .n{flex:none;width:24px;height:24px;border-radius:8px;background:#EAF1FE;color:#2563EB;font-weight:700;font-size:12px;
+       box-sizing:border-box;margin:0;min-width:0;display:flex;flex-direction:column}
+.stApp .xcard .card-head{margin-bottom:10px}
+.stApp .xcard .xbody{flex:1 1 auto;min-width:0;overflow-x:auto;scrollbar-width:thin;scrollbar-color:#CBD5E1 transparent}
+/* Cards that sit side by side share one CSS grid: equal heights, no fixed pixel heights, no inner scrollbars, stacks on narrow screens */
+.stApp .xgrid{display:grid;gap:1rem;align-items:stretch;margin:0}
+@media (max-width:1100px){.stApp .xgrid{grid-template-columns:minmax(0,1fr) !important}}
+
+/* ── Spend by business unit bars ── */
+.stApp .xbar{display:grid;grid-template-columns:minmax(80px,1fr) 1.6fr auto;align-items:center;gap:12px;margin:0 0 10px;font-size:13px}
+.stApp .xbar b{color:#334155;font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.stApp .xbar .track{background:#EEF3FB;border-radius:999px;height:10px;overflow:hidden}
+.stApp .xbar .fill{height:10px;border-radius:999px}
+.stApp .xbar .amt{font-weight:600;color:#0F1B3D;text-align:right;white-space:nowrap;font-variant-numeric:tabular-nums;line-height:1.25}
+.stApp .xbar .amt small{display:block;font-weight:600;font-size:11px}
+
+/* ── Opportunities and actions ── */
+.stApp .xopp{display:flex;justify-content:space-between;align-items:center;gap:12px;padding:11px 0;border-bottom:1px solid #EDF1F7}
+.stApp .xopp:last-child{border-bottom:none}
+.stApp .xopp b{display:block;font-size:13.5px;font-weight:600;color:#0F1B3D;line-height:1.3}
+.stApp .xopp span{font-size:12px;color:#64748B;line-height:1.4}
+.stApp .xopp .save{font-weight:700;color:#16A34A;font-size:14px;white-space:nowrap;font-variant-numeric:tabular-nums}
+.stApp .xact{display:flex;gap:12px;padding:11px 0;border-bottom:1px solid #EDF1F7}
+.stApp .xact:last-child{border-bottom:none}
+.stApp .xact .n{flex:none;width:24px;height:24px;border-radius:8px;background:#EAF1FE;color:#2563EB;font-weight:700;font-size:12px;
          display:flex;align-items:center;justify-content:center}
-.xact b{display:block;font-size:13.5px;color:#0F1B3D;font-weight:600}
-.xact span{font-size:12px;color:#64748B;line-height:1.4}
-.xempty{color:#64748B;font-size:13px;padding:18px 0;text-align:center}
+.stApp .xact b{display:block;font-size:13.5px;color:#0F1B3D;font-weight:600;line-height:1.3}
+.stApp .xact span{font-size:12px;color:#64748B;line-height:1.45}
+.stApp .xempty{color:#64748B;font-size:13px;padding:22px 0;text-align:center}
+
+/* ── Tables (watchlist, product cost view) ── */
+.stApp .xtable{width:100%;border-collapse:collapse;font-size:13px;margin:0}
+.stApp .xtable th{position:sticky;top:0;background:#FFFFFF;font-size:11px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;
+           color:#64748B;text-align:left;padding:7px 10px 7px 0;border-bottom:1px solid #E6ECF5;border-top:none}
+.stApp .xtable td{padding:10px 10px 10px 0;border-bottom:1px solid #EDF1F7;border-top:none;color:#0F1B3D;vertical-align:middle;background:transparent}
+.stApp .xtable tr:last-child td{border-bottom:none}
+.stApp .xtable tr:hover td{background:#F8FAFE}
+.stApp .xtable td small{display:block;color:#64748B;font-size:11.5px;line-height:1.35}
+.stApp .xtable td.num{text-align:right;white-space:nowrap;font-variant-numeric:tabular-nums}
+.stApp .xtable th.num{text-align:right}
+.stApp .xtable th:last-child,.stApp .xtable td:last-child{padding-right:0}
+.stApp .badge{display:inline-block;padding:3px 10px;border-radius:999px;font-size:11px;font-weight:600;white-space:nowrap}
+
+/* ── Native widgets used on this page ── */
+.stApp [data-testid="stPills"] button,.stApp [data-testid="stPills"] [data-baseweb="button-group"] button{
+    border-radius:999px !important;border:1px solid #E3E9F4 !important;background:#FFFFFF !important;color:#334155 !important;
+    font-size:12.5px !important;font-weight:600 !important;min-height:32px;padding:4px 14px !important;box-shadow:0 1px 2px rgba(15,27,61,.04)}
+.stApp [data-testid="stPills"] button:hover{background:#F5F8FE !important;border-color:#BFD3F8 !important;color:#1D4ED8 !important}
+.stApp [data-testid="stPills"] button[aria-checked="true"],.stApp [data-testid="stPills"] button[aria-pressed="true"],
+.stApp [data-testid="stPills"] button[kind="pillsActive"]{background:#EAF1FE !important;border-color:#2563EB !important;color:#1D4ED8 !important}
+.stApp [data-testid="stSelectbox"] label p,.stApp [data-testid="stRadio"] > label p,.stApp [data-testid="stPills"] label p{
+    font-size:11px !important;font-weight:600 !important;color:#64748B !important;text-transform:uppercase;letter-spacing:.06em}
+.stApp [data-testid="stRadio"] [role="radiogroup"] label p{font-size:13px;color:#334155}
+.stApp [data-testid="stCaptionContainer"]{color:#64748B}
+
+/* ── Details pop-up ── */
+div[data-testid="stDialog"] div[role="dialog"]{border-radius:20px;background:#F6F9FE;border:1px solid #E6ECF5;
+    box-shadow:0 24px 64px rgba(37,99,235,.18),0 2px 6px rgba(15,27,61,.05)}
+div[data-testid="stDialog"] div[role="dialog"] h2{font-size:20px;font-weight:700;color:#0F1B3D;letter-spacing:-.02em}
 </style>
 """
 CHART_CARD = 18   # border + padding the app CSS puts around a Plotly chart; HTML cards add it to line up with charts
@@ -965,10 +1001,20 @@ def exec_kpis(cards):
     return '<div class="xkpis">' + "".join(cards) + "</div>"
 
 
-def html_card(title, subtitle, body, height):
-    """A white card with a title and subtitle around trusted HTML ``body``; ``height`` matches the Plotly chart beside it."""
-    return (f'<div class="xcard" style="height:{height + CHART_CARD}px"><h4>{html.escape(title)}</h4>'
-            f'<div class="xsub">{html.escape(subtitle)}</div>{body}</div>')
+def html_card(title, subtitle, body, height=None):
+    """A white card with a title and subtitle around trusted HTML ``body`` (same look as the Overview cards).
+
+    Put cards that sit side by side in ``panel_row`` so they share one height; ``height`` is only a minimum for a card used on its own."""
+    style = f' style="min-height:{int(height) + CHART_CARD}px"' if height else ""
+    return (f'<div class="xcard"{style}><div class="card-head"><div>'
+            f'<div class="card-title">{html.escape(title)}</div><div class="card-desc">{html.escape(subtitle)}</div></div></div>'
+            f'<div class="xbody">{body}</div></div>')
+
+
+def panel_row(cards, cols=None):
+    """Cards side by side in one CSS grid: equal heights, no inner scrollbars. ``cols`` is a CSS column list, e.g. "minmax(0,1.7fr) minmax(0,1fr)"."""
+    cols = cols or " ".join(["minmax(0,1fr)"] * len(cards))
+    return f'<div class="xgrid" style="grid-template-columns:{cols}">' + "".join(cards) + "</div>"
 
 
 def card_layout(fig, title, subtitle="", height=380, legend=False):
@@ -982,8 +1028,9 @@ def card_layout(fig, title, subtitle="", height=380, legend=False):
         legend=dict(orientation="h", x=1, xanchor="right", y=1.02, yanchor="bottom", bgcolor="rgba(0,0,0,0)", font=dict(size=12, color=TEXT)),
         hoverlabel=dict(bgcolor="white", bordercolor="#E2E8F0", font=dict(family=FONT, size=13, color=INK)))
     if subtitle:
-        fig.add_annotation(text=html.escape(subtitle), xref="paper", yref="paper", x=0, y=1, yshift=top - 52, xanchor="left", yanchor="bottom",
+        fig.add_annotation(name="subtitle", text=html.escape(subtitle), xref="paper", yref="paper", x=0, y=1, yshift=top - 52, xanchor="left", yanchor="bottom",
                            showarrow=False, font=dict(size=12.5, color="#64748B", family=FONT))
+    fig.update_layout(meta=dict(title=title, subtitle=subtitle, top=top))   # lets detach_header() move the header into the app's card
     fig.update_xaxes(showgrid=False, zeroline=False, showline=False, tickfont=dict(color="#64748B", size=11))
     fig.update_yaxes(gridcolor="#EDF1F7", zeroline=False, showline=False, tickfont=dict(color="#64748B", size=11))
     return fig
@@ -1076,7 +1123,7 @@ PRIORITY = {   # status: (badge text, background, ink)
 }
 
 
-def watchlist_html(recs, fmt_money, n=6):
+def watchlist_html(recs, fmt_money, n=5):
     """Table of the underutilized VMs with the biggest estimated saving."""
     if recs is None:
         return '<div class="xempty">Load VM utilization above to see underutilized resources.</div>'
@@ -1096,7 +1143,7 @@ def watchlist_html(recs, fmt_money, n=6):
     return '<table class="xtable"><tr><th>Resource</th><th>Signal</th><th>Priority</th></tr>' + "".join(rows) + "</table>"
 
 
-def product_table_html(df, bu, vm_savings, fmt_money, n=12):
+def product_table_html(df, bu, vm_savings, fmt_money, n=10):
     """Business unit → feature cluster → product (application) cost table for one unit."""
     rows = select_rows(df, BU, bu)
     t = group_table(rows, APP)

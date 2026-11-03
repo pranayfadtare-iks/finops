@@ -75,6 +75,11 @@ SVG_ROWS = _icon('<line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="2
 SVG_SERVICES = _icon('<path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/><polyline points="3.27 6.96 12 12.01 20.73 6.96"/><line x1="12" y1="22.08" x2="12" y2="12"/>', "#F59E0B")
 
 
+SVG_ALERT = _icon('<path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/>', "#EF4444")
+SVG_CHECK = _icon('<path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/>', "#16A34A")
+SVG_USERS = _icon('<path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/>', "#0891B2")
+SVG_SERVER = _icon('<rect x="2" y="3" width="20" height="8" rx="2"/><rect x="2" y="13" width="20" height="8" rx="2"/><line x1="6" y1="7" x2="6.01" y2="7"/><line x1="6" y1="17" x2="6.01" y2="17"/>', "#8B5CF6")
+
 NAV_ITEMS = ["Overview", "Leadership", "CPU & RAM", "Cost breakdowns", "Resource explorer", "Data & export"]
 PERIODS = {"Last 7 days": 7, "Last 30 days": 30, "Last 60 days": 60, "Last 90 days": 90, "Last 180 days": 180}
 
@@ -244,7 +249,8 @@ section[data-testid="stSidebar"] div[role="radiogroup"] > label:nth-of-type(2)::
 .kpi-body {min-width: 0; flex: 1;}
 .kpi-label {font-size: calc(12.5px * var(--k)); font-weight: 500; color: #475569; margin-bottom: calc(4px * var(--k)); white-space: nowrap; overflow: hidden; text-overflow: ellipsis;}
 .kpi-value {font-size: calc(24px * var(--k)); font-weight: 700; color: #0F1B3D; line-height: 1.15; letter-spacing: -0.02em; font-variant-numeric: tabular-nums; white-space: nowrap;}
-.kpi-sub {font-size: calc(12px * var(--k)); color: #64748B; font-weight: 500; min-width: 0; line-height: 1.3;}
+.kpi-sub {font-size: calc(12px * var(--k)); color: #64748B; font-weight: 500; min-width: 0; line-height: 1.3;
+    display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;}
 .kpi-spark {flex: 0 0 auto; display: block; width: calc(84px * var(--k)); height: auto;}
 
 /* ── Ranked list rows (project / region / SKU) ── */
@@ -1145,6 +1151,52 @@ def card_header(title, desc="", badge="", right_html=""):
                   f'{right_html}{badge_html}</div>'), unsafe_allow_html=True)
 
 
+def donut_legend_html(legend):
+    """Overview-style legend for a leadership donut: coloured dot, name and share. ``legend`` is [(name, colour, share), ...]."""
+    rows = "".join(
+        f'<div class="dl-row"><span class="dl-dot" style="background:{c};"></span>'
+        f'<span class="dl-name" title="{html.escape(str(n), quote=True)}">{html.escape(str(n))}</span>'
+        f'<span class="dl-pct">{s * 100:.1f}%</span></div>' for n, c, s in legend)
+    return f'<div class="dl-list">{rows}</div>'
+
+
+def donut_card(key, fig, legend, title, subtitle="", on_select=None, footer=None):
+    """A leadership donut in the same bordered card as the Overview donuts: header on top, ring on the left, legend on the right.
+
+    ``on_select`` (optional) makes the slices clickable; ``footer`` (optional callable) renders inside the card, e.g. the pills."""
+    with card(f"lead_{key}"):
+        card_header(title, subtitle)
+        chart_col, legend_col = st.columns([1.05, 1], vertical_alignment="center")
+        with chart_col:
+            if on_select is None:
+                st.plotly_chart(fig, use_container_width=True, key=key, config={"displayModeBar": False})
+            else:
+                st.plotly_chart(fig, use_container_width=True, key=key, on_select=on_select, selection_mode="points",
+                                config={"displayModeBar": False})
+        with legend_col:
+            st.markdown(donut_legend_html(legend), unsafe_allow_html=True)
+        if footer:
+            footer()
+
+
+def chart_card(key, fig, chart_key, on_select=None, footer=None, badge=""):
+    """A leadership chart inside the same bordered card + header as the Overview charts.
+
+    The chart's own title / subtitle / top legend move into the card header; ``footer`` (optional callable) renders inside the card."""
+    title, subtitle, legend = vc.detach_header(fig)
+    legend_html = ('<div class="legend-inline">' + "".join(f'<span><i style="background:{c}"></i>{html.escape(str(n))}</span>' for n, c in legend)
+                   + "</div>") if legend else ""
+    with card(f"lead_{key}"):
+        card_header(title, subtitle, badge, right_html=legend_html)
+        if on_select is None:
+            st.plotly_chart(fig, use_container_width=True, key=chart_key, config={"displayModeBar": False})
+        else:
+            st.plotly_chart(fig, use_container_width=True, key=chart_key, on_select=on_select, selection_mode="points",
+                            config={"displayModeBar": False})
+        if footer:
+            footer()
+
+
 def sparkline(values, color, name, bars=False, width=84, height=28):
     vals = [float(v) for v in values if pd.notna(v)]
     if len(vals) < 2:
@@ -1177,7 +1229,7 @@ def render_kpi_card(label, value, sub, svg_icon, icon_bg, spark=""):
     st.markdown(h(
         f'<div class="kpi-card"><div class="kpi-top"><div class="kpi-icon" style="background:{icon_bg};">{svg_icon}</div>'
         f'<div class="kpi-body"><div class="kpi-label">{html.escape(label)}</div><div class="kpi-value">{value}</div></div></div>'
-        f'<div class="kpi-foot"><div class="kpi-sub">{html.escape(sub)}</div>{spark}</div></div>'
+        f'<div class="kpi-foot"><div class="kpi-sub" title="{html.escape(sub, quote=True)}">{html.escape(sub)}</div>{spark}</div></div>'
     ), unsafe_allow_html=True)
 
 
@@ -1565,9 +1617,7 @@ if page == "Overview":
 
 # ─── PAGE: Leadership (executive overview + VM efficiency) ──────────────────
 elif page == "Leadership":
-    hero_slot = st.empty()
-    hero_slot.markdown(bl.exec_hero("…", "Loading billing data", ""), unsafe_allow_html=True)
-    st.markdown(vc.KPI_CSS+bl.LEAD_CSS,unsafe_allow_html=True)
+    st.markdown(vc.KPI_CSS + bl.EXEC_CSS + bl.LEAD_CSS, unsafe_allow_html=True)
     tab_cost,tab_vm = st.tabs(["Executive overview","VM efficiency"])
     with tab_cost:
         prev_start = previous_period_start(start_day,end_day)
@@ -1637,20 +1687,20 @@ elif page == "Leadership":
                         st.session_state["bill_open"] = key
                 return _cb
 
-            def pie_card(rows,dim,key,pick_label="Open details for",pills=True,**kwargs):
-                """A spend donut. Clicking a slice opens it; the pills underneath do the same and always work."""
-                fig,lookup,options = bl.spend_pie(rows,dim,fmt_money,**kwargs)
+            def pie_card(rows,dim,key,pick_label="Open details for",pills=True,top=6,height=None,title=None,subtitle=None,color_map=None,clickable=True):
+                """A spend donut in the Overview style (thin ring, total in the middle, dot / name / share legend).
+                Clicking a slice opens it; the pills underneath do the same and always work. ``height`` is the card's chart row height."""
+                fig,lookup,options,legend = bl.spend_donut(rows,dim,fmt_money,top=top,color_map=color_map,clickable=clickable,
+                                                           height=(height-62) if height else 300)
                 if fig is None:
                     st.info(f"No {bl.TITLES[dim].lower()} cost to show.")
                     return
-                if kwargs.get("clickable",True):
-                    st.plotly_chart(fig,use_container_width=True,key=key,on_select=on_chart_click(key,lookup,dim),selection_mode="points",
-                                    config={"displayModeBar":False})
-                    if pills:
-                        st.pills(pick_label,options,selection_mode="single",key=f"{key}_pick",format_func=lambda v: bl.display(dim,v),
-                                 on_change=on_pick(f"{key}_pick",dim))
-                else:
-                    st.plotly_chart(fig,use_container_width=True,key=key,config={"displayModeBar":False})
+                title = title or f"Spend by {bl.TITLES[dim].lower()}"
+                if subtitle is None:
+                    subtitle = "Share of net cost · click a slice for details." if clickable else "Share of net cost."
+                footer = (lambda: st.pills(pick_label,options,selection_mode="single",key=f"{key}_pick",format_func=lambda v: bl.display(dim,v),
+                                           on_change=on_pick(f"{key}_pick",dim))) if (clickable and pills) else None
+                donut_card(key,fig,legend,title,subtitle,on_select=on_chart_click(key,lookup,dim) if clickable else None,footer=footer)
 
             # VM utilization (shared with the CPU & RAM view): needed for underutilized candidates, savings and the watchlist
             projects_t = tuple(MONITORING_PROJECTS)
@@ -1668,33 +1718,38 @@ elif page == "Leadership":
                 counts = None
 
             scope = [f"{bl.TITLES[d]}: {', '.join(bl.display(d,v) for v in chosen)}" for d,chosen in zip((bl.BU,bl.CLUSTER,bl.APP),org) if chosen]
-            hero_slot.markdown(bl.exec_hero(fmt_money(sm["cost"]),f"Net cloud spend · {start_day:%d %b} – {end_day:%d %b %Y}",
-                                            ("Showing " + "; ".join(scope) + ".") if scope else ""),unsafe_allow_html=True)
+            if scope:
+                st.caption("Showing " + "; ".join(scope) + ".")
 
             down = recs[recs["status"].isin(lead.DOWNSIZE)] if recs is not None else None
             sched = bl.schedule_saving(billing,start_day,end_day)
-            cards = [bl.exec_kpi("Total cloud spend",fmt_money(sm["cost"]),
-                                 (bl.change_span(sm["delta"],sm["delta_pct"],fmt_money," vs previous period") if has_prev else "Selected period · net of credits"),
-                                 {"INR":"₹","USD":"$","EUR":"€","GBP":"£"}.get(cur_label,"¤"))]
-            if counts:
-                cards.append(bl.exec_kpi("Resources inventoried",f"{counts['resources']:,}",f"Billed resources across {counts['projects']} GCP projects · excl. jobs","▦","#6250d6"))
-            else:
-                cards.append(bl.exec_kpi("Resources inventoried","—","Resource count unavailable","▦","#6250d6"))
+            spend_series = daily_all[daily_all["period"]=="current"].groupby("usage_date")["net_cost"].sum().sort_index()
             if down is not None:
-                cards.append(bl.exec_kpi("Underutilized candidates",f"{len(down):,}",f"of {len(recs):,} running VMs · requires owner validation","⌁","#eb6834"))
-                cards.append(bl.exec_kpi("Potential monthly savings",fmt_money(down["monthly_saving"].sum(skipna=True)),
-                                         "VM rightsizing estimate, not realized" + (f" · +{fmt_money(sched)} from non-prod schedules" if sched>0 else ""),
-                                         "↘","#0ca30c","#0a7d0a"))
+                under_value,under_sub = f"{len(down):,}",f"of {len(recs):,} running VMs · needs owner validation"
+                save_value = fmt_money(down["monthly_saving"].sum(skipna=True))
+                save_sub = "VM rightsizing estimate" + (f" · +{fmt_money(sched)} non-prod schedules" if sched>0 else "")
             else:
-                cards.append(bl.exec_kpi("Underutilized candidates","—","Load VM utilization to evaluate","⌁","#eb6834"))
-                cards.append(bl.exec_kpi("Potential monthly savings",fmt_money(sched) if sched>0 else "—",
-                                         "Non-prod schedules only · load VM utilization for rightsizing","↘","#0ca30c","#0a7d0a"))
+                under_value,under_sub = "—","Load VM utilization to evaluate"
+                save_value,save_sub = (fmt_money(sched) if sched>0 else "—"),"Non-prod schedules only · load VM utilization"
             if counts and counts["resources"]:
-                cards.append(bl.exec_kpi("Optimization coverage",f"{counts['mapped']/counts['resources']:.0%}",
-                                         f"Resources with BU / product mapping · {sm['assigned_pct']:.0%} of spend","✓","#1baf7a"))
+                cover_value,cover_sub = f"{counts['mapped']/counts['resources']:.0%}",f"Resources mapped · {sm['assigned_pct']:.0%} of spend"
             else:
-                cards.append(bl.exec_kpi("Optimization coverage",f"{sm['assigned_pct']:.0%}","Spend with BU / product mapping","✓","#1baf7a"))
-            st.markdown(bl.exec_kpis(cards),unsafe_allow_html=True)
+                cover_value,cover_sub = f"{sm['assigned_pct']:.0%}","Spend with BU / product mapping"
+            k1,k2,k3,k4,k5 = st.columns(5)
+            with k1:
+                render_kpi_card("Total Cloud Spend",fmt_money(sm["cost"]),
+                                (f"{bl.arrow_text(sm['delta'],sm['delta_pct'],fmt_money)} vs previous" if has_prev else "Selected period · net of credits"),
+                                SVG_NET_COST,"#E8F0FE",sparkline(spend_series,"#2563EB","lead_cost"))
+            with k2:
+                render_kpi_card("Resources Inventoried",f"{counts['resources']:,}" if counts else "—",
+                                f"Across {counts['projects']} GCP projects" if counts else "Resource count unavailable",SVG_SERVER,"#F1EAFE")
+            with k3:
+                render_kpi_card("Underutilized Candidates",under_value,under_sub,SVG_SERVICES,"#FEF1DC")
+            with k4:
+                render_kpi_card("Potential Monthly Savings",save_value,save_sub,SVG_CREDITS,"#E3F8EC")
+            with k5:
+                render_kpi_card("Optimization Coverage",cover_value,cover_sub,SVG_CHECK,"#E6F0FF")
+            st.markdown('<div style="height:6px"></div>',unsafe_allow_html=True)
             if recs is None:
                 note,load_col = st.columns([4,1])
                 note.info(f"Underutilized candidates, rightsizing savings and the watchlist need VM CPU/RAM history (project(s): {', '.join(projects_t)}). "
@@ -1704,36 +1759,34 @@ elif page == "Leadership":
                     st.rerun()
 
             row_h = 380
-            t_col,d_col = st.columns([1.45,1])
+            t_col,d_col = st.columns([1.7,1])
             with t_col:
-                st.plotly_chart(bl.period_trend(daily_all,start_day,end_day,fmt_money,row_h),use_container_width=True,key="exec_trend",
-                                config={"displayModeBar":False})
+                chart_card("trend",bl.period_trend(daily_all,start_day,end_day,fmt_money,row_h),"exec_trend")
             with d_col:
                 pie_card(billing,bl.BU,"exec_bu_donut",pills=False,color_map=colors,height=row_h,title="Spend by business unit",
                          subtitle="Share of total selected spend · click a slice to open the unit")
 
-            panel_h = 330
-            b_col,o_col,w_col = st.columns(3)
-            b_col.markdown(bl.html_card("Spend by business unit","Net cost per unit · change vs the previous period",
-                                        bl.bu_bars_html(score,colors,fmt_money),panel_h),unsafe_allow_html=True)
-            o_col.markdown(bl.html_card("Top optimization opportunities","Estimated monthly savings by action",
-                                        bl.opportunities_html(bl.opportunities(recs,billing,start_day,end_day),fmt_money,recs is not None),panel_h),
-                           unsafe_allow_html=True)
-            w_col.markdown(bl.html_card("Underutilized resource watchlist","VM findings requiring engineering review",
-                                        bl.watchlist_html(recs,fmt_money),panel_h),unsafe_allow_html=True)
+            st.markdown(bl.panel_row([
+                bl.html_card("Spend by business unit","Net cost per unit · change vs the previous period",bl.bu_bars_html(score,colors,fmt_money)),
+                bl.html_card("Top optimization opportunities","Estimated monthly savings by action",
+                             bl.opportunities_html(bl.opportunities(recs,billing,start_day,end_day),fmt_money,recs is not None)),
+                bl.html_card("Underutilized resource watchlist","VM findings requiring engineering review",bl.watchlist_html(recs,fmt_money)),
+            ]),unsafe_allow_html=True)
 
             if bu_options:
-                sel_col,_spacer = st.columns([1.45,1])
-                focus = sel_col.selectbox("Product cost view for",bu_options,key="bu_focus",format_func=bl.bu_name)
+                vp0,vp1,_spacer = st.columns([0.62,1.6,2.8],vertical_alignment="center")
+                vp0.markdown('<div class="view-label">Product view for</div>',unsafe_allow_html=True)
+                focus = vp1.selectbox("Product cost view for",bu_options,key="bu_focus",format_func=bl.bu_name,label_visibility="collapsed")
                 vm_savings = (down[down[bl.BU]==focus].groupby(bl.APP)["monthly_saving"].sum().to_dict() if down is not None else None)
-                p_col,a_col = st.columns([1.45,1])
-                p_col.markdown(bl.html_card(f"{bl.bu_name(focus)} · product cost view",
-                                            "Business unit → feature cluster → product · potential = VM rightsizing savings per month",
-                                            bl.product_table_html(billing,focus,vm_savings,fmt_money),row_h),unsafe_allow_html=True)
-                with a_col:
-                    st.markdown(bl.html_card("Recommended leadership actions","Move from opportunity to verified savings",bl.actions_html(found),row_h),
-                                unsafe_allow_html=True)
-                    if found:
+                st.markdown(bl.panel_row([
+                    bl.html_card(f"{bl.bu_name(focus)} · product cost view",
+                                 "Business unit → feature cluster → product · potential = VM rightsizing savings per month",
+                                 bl.product_table_html(billing,focus,vm_savings,fmt_money)),
+                    bl.html_card("Recommended leadership actions","Move from opportunity to verified savings",bl.actions_html(found)),
+                ],cols="minmax(0,1.7fr) minmax(0,1fr)"),unsafe_allow_html=True)
+                if found:
+                    _pad,pill_col = st.columns([1.7,1])
+                    with pill_col:
                         st.pills("Open action",list(range(1,min(len(found),5)+1)),selection_mode="single",key="exec_act_pick",
                                  format_func=lambda n: f"#{n}",on_change=on_action_pick)
 
@@ -1749,30 +1802,39 @@ elif page == "Leadership":
                     rows = bl.select_rows(billing,bl.BU,focus)
                     color = colors.get(focus,bl.BASE_COLOR)
                     head_col,open_col = st.columns([3,1])
-                    head_col.caption(f"Showing **{bl.bu_name(focus)}** · change the unit in **Product cost view for** above."
+                    head_col.caption(f"Showing **{bl.bu_name(focus)}** · change the unit in **Product view for** above."
                                      + (" Applications in the BU billing plan: " + ", ".join(bl.MAPPING["apps_by_bu"][focus]) if focus in bl.MAPPING["apps_by_bu"] else ""))
                     if open_col.button("Open full details →",key="bu_focus_open",use_container_width=True):
                         st.session_state["bill_open"] = (bl.BU,focus)
                     st.markdown(bl.focus_story(r,rows,sm["bu_count"],fmt_money),unsafe_allow_html=True)
                     c1,c2,c3,c4 = st.columns(4)
-                    c1.markdown(vc.kpi_card("Net cost",fmt_money(r["cost"]),f"{r['share']:.0%} of total spend",color),unsafe_allow_html=True)
-                    c2.markdown(vc.kpi_card("vs previous period",bl.arrow_text(r["delta"],r["delta_pct"],fmt_money) if r["prev"]>0 else "new",
-                                            f"was {fmt_money(r['prev'])}","#EF4444" if r["delta"]>0 else "#10B981"),unsafe_allow_html=True)
-                    c3.markdown(vc.kpi_card("Run rate / 30 days",fmt_money(r["run_rate"]),f"{fmt_money(r['run_rate']/30)} per day","#6250d6"),unsafe_allow_html=True)
-                    c4.markdown(vc.kpi_card("Non-production",f"{r['nonprod_pct']:.0%}" if pd.notna(r["nonprod_pct"]) else "n/a",
-                                            f"{r['owner_pct']:.0%} of spend has an owner" if pd.notna(r["owner_pct"]) else "","#eb6834"),unsafe_allow_html=True)
+                    with c1:
+                        render_kpi_card("Net Cost",fmt_money(r["cost"]),f"{r['share']:.0%} of total spend",SVG_NET_COST,"#E8F0FE")
+                    with c2:
+                        if r["prev"]>0:
+                            moved = ("+" if r["delta"]>0 else "−" if r["delta"]<0 else "")+fmt_money(abs(r["delta"]))
+                            render_kpi_card("Vs Previous Period",moved,f"{r['delta_pct']:+.0%} · was {fmt_money(r['prev'])}",
+                                            SVG_ALERT if r["delta"]>0 else SVG_CHECK,"#FEE2E2" if r["delta"]>0 else "#E3F8EC")
+                        else:
+                            render_kpi_card("Vs Previous Period","New","No spend in the previous period",SVG_GROSS_COST,"#F1EAFE")
+                    with c3:
+                        render_kpi_card("Run Rate / 30 Days",fmt_money(r["run_rate"]),f"{fmt_money(r['run_rate']/30)} per day",SVG_GROSS_COST,"#F1EAFE")
+                    with c4:
+                        render_kpi_card("Non-Production",f"{r['nonprod_pct']:.0%}" if pd.notna(r["nonprod_pct"]) else "n/a",
+                                        f"{r['owner_pct']:.0%} of spend has an owner" if pd.notna(r["owner_pct"]) else "No owner data",SVG_SERVICES,"#FEF1DC")
+                    st.markdown('<div style="height:6px"></div>',unsafe_allow_html=True)
                     f1,f2 = st.columns(2)
                     with f1:
                         fig = bl.focus_trend(daily_all,focus,start_day,end_day,color)
                         if fig is not None:
-                            st.plotly_chart(fig,use_container_width=True,key="bu_focus_trend",config={"displayModeBar":False})
+                            chart_card("focus_trend",fig,"bu_focus_trend")
                     with f2:
                         fig,_lookup = bl.bridge(rows,bl.APP,fmt_money,n=6,title="What drove the change",
                                                 subtitle="Previous → selected period, by product · red = more spend, green = less.",clickable=False)
                         if fig is None:
                             st.info("No previous-period spend to compare with.")
                         else:
-                            st.plotly_chart(fig,use_container_width=True,key="bu_focus_bridge",config={"displayModeBar":False})
+                            chart_card("focus_bridge",fig,"bu_focus_bridge")
                     for pair in (bl.FOCUS_DIMS[:2],bl.FOCUS_DIMS[2:]):
                         for holder,dim in zip(st.columns(2),pair):
                             with holder:
@@ -1788,29 +1850,30 @@ elif page == "Leadership":
                 with s1:
                     fig = bl.bu_sunburst(billing,colors,fmt_money)
                     if fig is not None:
-                        st.plotly_chart(fig,use_container_width=True,key="bu_sunburst",config={"displayModeBar":False})
+                        chart_card("sunburst",fig,"bu_sunburst")
                 with s2:
                     fig = bl.bu_trend(daily_all,score,colors,start_day,end_day,fmt_money)
                     if fig is not None:
-                        st.plotly_chart(fig,use_container_width=True,key="bu_trend",config={"displayModeBar":False})
+                        chart_card("bu_trend",fig,"bu_trend")
             with t_score:
-                st.caption("Pick a row to show that unit in the product cost view and the deep dive.")
                 table = score.assign(name=score["value"].map(bl.bu_name),share=score["share"]*100,delta_pct=score["delta_pct"]*100,
                                      nonprod_pct=score["nonprod_pct"]*100,owner_pct=score["owner_pct"]*100)
-                st.dataframe(table[["name","signal","cost","share","delta","delta_pct","run_rate","trend","apps","top_app","top_service","nonprod_pct","owner_pct"]],
-                             use_container_width=True,hide_index=True,key="bu_table",on_select=on_table_pick,selection_mode="single-row",
-                             column_config={
-                                 "name":"Business unit","signal":"Signal",
-                                 "cost":st.column_config.NumberColumn("Net cost",format="%.0f"),
-                                 "share":st.column_config.ProgressColumn("Share of spend",format="%.0f%%",min_value=0,max_value=100),
-                                 "delta":st.column_config.NumberColumn("Change",format="%+.0f"),
-                                 "delta_pct":st.column_config.NumberColumn("Change %",format="%+.0f%%"),
-                                 "run_rate":st.column_config.NumberColumn("Run rate / 30d",format="%.0f"),
-                                 "trend":st.column_config.LineChartColumn("Daily trend",y_min=0),
-                                 "apps":st.column_config.NumberColumn("Products",format="%d"),
-                                 "top_app":"Top product","top_service":"Top service",
-                                 "nonprod_pct":st.column_config.ProgressColumn("Non-prod",format="%.0f%%",min_value=0,max_value=100),
-                                 "owner_pct":st.column_config.ProgressColumn("Has owner",format="%.0f%%",min_value=0,max_value=100)})
+                with card("lead_score"):
+                    card_header("Business unit scorecard","Pick a row to show that unit in the product cost view and the deep dive.")
+                    st.dataframe(table[["name","signal","cost","share","delta","delta_pct","run_rate","trend","apps","top_app","top_service","nonprod_pct","owner_pct"]],
+                                 use_container_width=True,hide_index=True,key="bu_table",on_select=on_table_pick,selection_mode="single-row",
+                                 column_config={
+                                     "name":"Business unit","signal":"Signal",
+                                     "cost":st.column_config.NumberColumn("Net cost",format="%.0f"),
+                                     "share":st.column_config.ProgressColumn("Share of spend",format="%.0f%%",min_value=0,max_value=100),
+                                     "delta":st.column_config.NumberColumn("Change",format="%+.0f"),
+                                     "delta_pct":st.column_config.NumberColumn("Change %",format="%+.0f%%"),
+                                     "run_rate":st.column_config.NumberColumn("Run rate / 30d",format="%.0f"),
+                                     "trend":st.column_config.LineChartColumn("Daily trend",y_min=0),
+                                     "apps":st.column_config.NumberColumn("Products",format="%d"),
+                                     "top_app":"Top product","top_service":"Top service",
+                                     "nonprod_pct":st.column_config.ProgressColumn("Non-prod",format="%.0f%%",min_value=0,max_value=100),
+                                     "owner_pct":st.column_config.ProgressColumn("Has owner",format="%.0f%%",min_value=0,max_value=100)})
             with t_change:
                 if not has_prev:
                     st.info("No billing data was found for the previous period, so changes cannot be shown.")
@@ -1820,24 +1883,22 @@ elif page == "Leadership":
                     if fig is None:
                         st.info("Nothing changed for this view.")
                     else:
-                        st.plotly_chart(fig,use_container_width=True,key="bill_chart_bridge",on_select=on_chart_click("bill_chart_bridge",lookup,mover_dim),
-                                        selection_mode="points",config={"displayModeBar":False})
+                        chart_card("bridge",fig,"bill_chart_bridge",on_select=on_chart_click("bill_chart_bridge",lookup,mover_dim))
             with t_matrix:
                 matrix_dim = st.radio("Compare business units by",bl.MATRIX_DIMS,format_func=lambda d: bl.TITLES[d],horizontal=True,key="bu_matrix_dim")
                 fig = bl.bu_matrix(billing,matrix_dim,fmt_money)
                 if fig is not None:
-                    st.plotly_chart(fig,use_container_width=True,key="bu_matrix",config={"displayModeBar":False})
+                    chart_card("matrix",fig,"bu_matrix")
             with t_health:
                 h1,h2 = st.columns(2)
                 with h1:
                     fig,lookup = bl.coverage_bars(billing)
                     if fig is not None:
-                        st.plotly_chart(fig,use_container_width=True,key="bu_coverage",on_select=on_coverage_click("bu_coverage",lookup),
-                                        selection_mode="points",config={"displayModeBar":False})
+                        chart_card("coverage",fig,"bu_coverage",on_select=on_coverage_click("bu_coverage",lookup))
                 with h2:
                     fig = bl.tagging_trend(daily_all,end_day)
                     if fig is not None:
-                        st.plotly_chart(fig,use_container_width=True,key="bu_tag_trend",config={"displayModeBar":False})
+                        chart_card("tag_trend",fig,"bu_tag_trend")
                 unmapped = bl.unmapped_features(billing)
                 if len(unmapped):
                     st.markdown(f"**{len(unmapped)} feature(s) outside the BU billing plan · {fmt_money(sm['unmapped'])}**")
@@ -1860,13 +1921,12 @@ elif page == "Leadership":
                     render_bill_details(open_dim,open_value,billing,bill_filters,fmt_money,start_day,end_day)
                 show_bill_details()
     with tab_vm:
-        st.markdown("<div class='sec-title'>Leadership view · Cloud efficiency</div>"
-                    "<div class='sec-sub'>Where VM spend can be reduced, who owns it and how healthy the fleet is. "
-                    "<b>Click any bar to open the details.</b></div>",unsafe_allow_html=True)
         projects_t = tuple(MONITORING_PROJECTS)
         lead_signature = (str(start_day),str(end_day),projects_t,currency)
-        if st.button("Load leadership data",type="primary",key="lead_load"):
-            load_vm_bundle(projects_t,start_day,end_day,currency)
+        with card("lead_vm_intro"):
+            card_header("Cloud efficiency","Where VM spend can be reduced, who owns it and how healthy the fleet is. Click any bar to open the details.")
+            if st.button("Load leadership data",type="primary",key="lead_load"):
+                load_vm_bundle(projects_t,start_day,end_day,currency)
         if st.session_state.get("finops_vm_signature")!=lead_signature:
             st.info("Click **Load leadership data**. It reads the VM list, CPU/RAM history and billed cost for the selected dates "
                     "(the same data as the **CPU & RAM** view, so loading it once serves both).")
@@ -1896,9 +1956,11 @@ elif page == "Leadership":
                     ("Fleet right-sized",f"{sm['right_pct']:.0%}",f"{sm['right']} of {sm['evaluated']} evaluated VMs","#3B82F6","Share of evaluated VMs whose size fits."),
                     ("Owner label coverage",f"{sm['owner_pct']:.0%}",f"{sm['no_owner']} VMs have no owner","#06B6D4","VMs carrying an owner label."),
                 ]
-                for holder,(label,value,sub,accent,tip) in zip(st.columns(6),cards):
-                    holder.markdown(vc.kpi_card(label,value,sub,accent,tip),unsafe_allow_html=True)
-                st.write("")
+                icons = [(SVG_CREDITS,"#E3F8EC"),(SVG_SERVICES,"#FEF1DC"),(SVG_SERVER,"#F1EAFE"),(SVG_ALERT,"#FEE2E2"),(SVG_CHECK,"#E8F0FE"),(SVG_USERS,"#E0F5FA")]
+                for holder,(label,value,sub,_accent,_tip),(svg,bg) in zip(st.columns(6),cards,icons):
+                    with holder:
+                        render_kpi_card(label,value,sub,svg,bg)
+                st.markdown('<div style="height:6px"></div>',unsafe_allow_html=True)
 
                 def on_chart_click(chart_key,lookup,kind):
                     """Callback: remember which bar was clicked; the details pop-up opens on the rerun."""
@@ -1911,8 +1973,7 @@ elif page == "Leadership":
                     return _cb
 
                 def clickable(fig,lookup,chart_key,kind):
-                    st.plotly_chart(fig,use_container_width=True,key=chart_key,on_select=on_chart_click(chart_key,lookup,kind),selection_mode="points",
-                                    config={"displayModeBar":False})
+                    chart_card(chart_key,fig,chart_key,on_select=on_chart_click(chart_key,lookup,kind))
 
                 row1a,row1b = st.columns(2)
                 with row1a:

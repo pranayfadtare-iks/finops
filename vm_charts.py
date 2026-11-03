@@ -67,11 +67,43 @@ def finish(fig, title, subtitle="", height=380, legend=True):
         hoverlabel=dict(bgcolor="white", bordercolor="#E2E8F0", font=dict(family=FONT, size=13, color=INK)),
     )
     if subtitle:
-        fig.add_annotation(text=subtitle, xref="paper", yref="paper", x=0.0, y=1.0, yshift=32, xanchor="left",
+        fig.add_annotation(name="subtitle", text=subtitle, xref="paper", yref="paper", x=0.0, y=1.0, yshift=32, xanchor="left",
                            yanchor="bottom", showarrow=False, font=dict(size=12.5, color=MUTED, family=FONT))
+    fig.update_layout(meta=dict(title=title, subtitle=subtitle, top=top))   # lets detach_header() move the header out of the figure
     fig.update_xaxes(showgrid=False, zeroline=False, showline=False, tickfont=dict(color=MUTED, size=11))
     fig.update_yaxes(gridcolor=GRID, zeroline=False, showline=False, tickfont=dict(color=MUTED, size=11))
     return fig
+
+
+def _trace_color(trace):
+    """Main colour of a Plotly trace (marker, then line, then fill), or None."""
+    for part in (getattr(trace, "marker", None), getattr(trace, "line", None)):
+        color = getattr(part, "color", None) if part is not None else None
+        if isinstance(color, str):
+            return color
+    fill = getattr(trace, "fillcolor", None)
+    return fill if isinstance(fill, str) else None
+
+
+def detach_header(fig):
+    """Take the title, subtitle and top legend out of a figure so the app can show them in its card header (like the Overview cards).
+
+    Returns ``(title, subtitle, legend_items)`` with ``legend_items`` as ``[(name, colour), ...]``. The figure is made shorter by the
+    space the header used; a figure built without ``finish`` / ``card_layout`` is returned untouched."""
+    meta = fig.layout.meta if isinstance(fig.layout.meta, dict) else {}
+    top = meta.get("top")
+    if top is None:
+        return "", "", []
+    shift = max(top - 14, 0)
+    fig.layout.annotations = [a for a in fig.layout.annotations if a.name != "subtitle"]
+    fig.update_layout(title=dict(text=""), height=int((fig.layout.height or 380) - shift),
+                      margin=dict(t=max((fig.layout.margin.t or top) - shift, 8)))
+    items, legend = [], fig.layout.legend
+    if fig.layout.showlegend and legend.orientation == "h" and (legend.y if legend.y is not None else 0) >= 0.99:
+        items = [(t.name, _trace_color(t)) for t in fig.data
+                 if t.name and getattr(t, "showlegend", True) is not False and _trace_color(t)]
+        fig.update_layout(showlegend=False)
+    return meta.get("title", ""), meta.get("subtitle", ""), items
 
 
 # --------------------------------------------------------------------------- KPI cards
