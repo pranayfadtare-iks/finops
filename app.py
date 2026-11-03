@@ -31,6 +31,14 @@ st.set_page_config(
 PROJECT_ID = os.getenv("GOOGLE_CLOUD_PROJECT", "iks-finops")
 TABLE_ID = os.getenv("GCP_BILLING_TABLE", "iks-finops.GCP_Finops_billing.gcp_billing_export_resource_v1_019EFB_4492BC_7B3DE6")
 CACHE_TTL = int(os.getenv("FINOPS_CACHE_TTL", "300"))
+# Every dashboard reports in USD. The billing export holds amounts in the billing currency (INR) plus
+# currency_conversion_rate (= billing-currency units per 1 USD), so each amount is divided by that rate.
+REPORT_CURRENCY = "USD"
+DEFAULT_BU = os.getenv("FINOPS_DEFAULT_BU", "Ambulatory")   # business unit the Leadership product cost view opens on
+_FX = "IFNULL(NULLIF(currency_conversion_rate,0),1)"
+COST_USD = f"(cost/{_FX})"
+CREDITS_USD = f"(IFNULL((SELECT SUM(c.amount) FROM UNNEST(credits) c),0)/{_FX})"
+NET_USD = f"((cost+IFNULL((SELECT SUM(c.amount) FROM UNNEST(credits) c),0))/{_FX})"
 # CPU/RAM (Cloud Monitoring) uses a separate service account key and a fixed list of projects.
 MONITORING_KEY_FILE = os.getenv("GCP_MONITORING_KEY_FILE", os.path.join(os.path.dirname(os.path.abspath(__file__)), "iksgcp.json"))
 MONITORING_PROJECTS = [p.strip() for p in os.getenv("GCP_MONITORING_PROJECTS", "iksgcp").split(",") if p.strip()]
@@ -438,12 +446,12 @@ def loading_overlay(title, subtitle="Fetching the latest data. This usually take
         slot.empty()
 
 
-def currency_symbol(currency="INR"):
+def currency_symbol(currency="USD"):
     return {"INR": "₹", "USD": "$", "EUR": "€", "GBP": "£", "JPY": "¥"}.get(str(currency).upper(), f"{currency} ")
 
 
-def money(value, currency="INR"):
-    """Full-precision money: ₹284,612 (no decimals above 1,000)."""
+def money(value, currency="USD"):
+    """Full-precision money: $284,612 (no decimals above 1,000)."""
     try:
         value = float(value or 0)
     except (ValueError, TypeError):
@@ -537,7 +545,7 @@ def get_org_options(start_day, end_day):
     """Business unit / feature cluster / application combinations with spend in the dates (feeds the cascading sidebar filters)."""
     sql = f"""
     SELECT {bl.dim_sql(bl.BU)} AS business_unit, {bl.dim_sql(bl.CLUSTER)} AS feature_cluster, {bl.dim_sql(bl.APP)} AS application,
-      SUM(cost) AS cost
+      SUM({COST_USD}) AS cost
     FROM `{TABLE_ID}`
     WHERE usage_start_time >= TIMESTAMP(@start_day)
       AND usage_start_time < TIMESTAMP(DATE_ADD(@end_day, INTERVAL 1 DAY))
@@ -587,7 +595,6 @@ def filter_sql(start_param="start_day"):
       AND (IFNULL(ARRAY_LENGTH(@projects),0)=0 OR COALESCE(project.name,project.id,'Unspecified project') IN UNNEST(@projects))
       AND (IFNULL(ARRAY_LENGTH(@regions),0)=0 OR COALESCE(location.region,'Unspecified region') IN UNNEST(@regions))
       AND (IFNULL(ARRAY_LENGTH(@skus),0)=0 OR COALESCE(sku.description,'Unspecified SKU') IN UNNEST(@skus))
-      AND (@currency='ALL' OR currency=@currency)
       AND (@resource_search='' OR STRPOS(LOWER(COALESCE(resource.name,resource.global_name,'')),LOWER(@resource_search))>0)
       AND (IFNULL(ARRAY_LENGTH(@bus),0)=0 OR {bl.dim_sql(bl.BU)} IN UNNEST(@bus))
       AND (IFNULL(ARRAY_LENGTH(@clusters),0)=0 OR {bl.dim_sql(bl.CLUSTER)} IN UNNEST(@clusters))
@@ -599,21 +606,21 @@ def filter_sql(start_param="start_day"):
 def load_summary_data(start_day, end_day, services, projects, regions, skus, currency, resource_search, org=NO_ORG):
     sql = f"""
     SELECT DATE(usage_start_time) AS usage_date,
-      IFNULL(currency,'UNKNOWN') AS currency,
+      'USD' AS currency,
       COALESCE(service.description,'Unspecified service') AS service,
       COALESCE(project.name,project.id,'Unspecified project') AS project,
       COALESCE(location.region,'Unspecified region') AS region,
       COALESCE(sku.description,'Unspecified SKU') AS sku,
-      SUM(cost) AS gross_cost,
-      SUM(IFNULL((SELECT SUM(c.amount) FROM UNNEST(credits) c),0)) AS credits,
-      SUM(cost+IFNULL((SELECT SUM(c.amount) FROM UNNEST(credits) c),0)) AS net_cost,
+      SUM({COST_USD}) AS gross_cost,
+      SUM({CREDITS_USD}) AS credits,
+      SUM({NET_USD}) AS net_cost,
       SUM(usage.amount) AS usage_amount,
       STRING_AGG(DISTINCT usage.unit,', ' LIMIT 4) AS usage_units,
       MAX(export_time) AS latest_export_time,
       COUNT(*) AS billing_rows
     FROM `{TABLE_ID}`
     {filter_sql()}
-    GROUP BY usage_date,currency,service,project,region,sku
+    GROUP BY usage_date,service,project,region,sku
     """
     return run_query(sql, query_params(start_day,end_day,services,projects,regions,skus,currency,resource_search,org), "summary")
 
@@ -621,15 +628,15 @@ def load_summary_data(start_day, end_day, services, projects, regions, skus, cur
 @st.cache_data(ttl=CACHE_TTL, show_spinner=False)
 def load_resource_data(start_day, end_day, services, projects, regions, skus, currency, resource_search, org=NO_ORG):
     sql = f"""
-    SELECT IFNULL(currency,'UNKNOWN') AS currency,
+    SELECT 'USD' AS currency,
       COALESCE(service.description,'Unspecified service') AS service,
       COALESCE(project.name,project.id,'Unspecified project') AS project,
       COALESCE(location.region,'Unspecified region') AS region,
       COALESCE(sku.description,'Unspecified SKU') AS sku,
       COALESCE(NULLIF(resource.name,''),NULLIF(resource.global_name,''),'Resource not reported') AS resource,
-      SUM(cost) AS gross_cost,
-      SUM(IFNULL((SELECT SUM(c.amount) FROM UNNEST(credits) c),0)) AS credits,
-      SUM(cost+IFNULL((SELECT SUM(c.amount) FROM UNNEST(credits) c),0)) AS net_cost,
+      SUM({COST_USD}) AS gross_cost,
+      SUM({CREDITS_USD}) AS credits,
+      SUM({NET_USD}) AS net_cost,
       SUM(usage.amount) AS usage_amount,
       STRING_AGG(DISTINCT usage.unit,', ' LIMIT 4) AS usage_units,
       MAX(DATE(usage_start_time)) AS last_usage_date,
@@ -637,7 +644,7 @@ def load_resource_data(start_day, end_day, services, projects, regions, skus, cu
       COUNT(*) AS billing_rows
     FROM `{TABLE_ID}`
     {filter_sql()}
-    GROUP BY currency,service,project,region,sku,resource
+    GROUP BY service,project,region,sku,resource
     ORDER BY net_cost DESC
     LIMIT 1000
     """
@@ -660,13 +667,13 @@ def load_leadership_billing(start_day, end_day, prev_start, services, projects, 
     dims = ",\n      ".join(f"{bl.dim_sql(d)} AS {d}" for d in bl.ALL_DIMS)
     sql = f"""
     SELECT IF(usage_start_time >= TIMESTAMP(@start_day),'current','previous') AS period,
-      IFNULL(currency,'UNKNOWN') AS currency,
+      'USD' AS currency,
       {dims},
-      SUM(cost) AS gross_cost,
-      SUM(cost+IFNULL((SELECT SUM(c.amount) FROM UNNEST(credits) c),0)) AS net_cost
+      SUM({COST_USD}) AS gross_cost,
+      SUM({NET_USD}) AS net_cost
     FROM `{TABLE_ID}`
     {filter_sql("prev_start")}
-    GROUP BY {",".join(str(i) for i in range(1, 3 + len(bl.ALL_DIMS)))}
+    GROUP BY {",".join(str(i) for i in [1, *range(3, 3 + len(bl.ALL_DIMS))])}
     """
     return bl.prepare(run_query(sql, leadership_params(start_day, end_day, prev_start, services, projects, regions, skus, currency, resource_search, org), "leadership"))
 
@@ -677,7 +684,7 @@ def load_leadership_daily(start_day, end_day, prev_start, services, projects, re
     SELECT IF(usage_start_time >= TIMESTAMP(@start_day),'current','previous') AS period,
       DATE(usage_start_time) AS usage_date,
       {bl.dim_sql(bl.BU)} AS {bl.BU},
-      SUM(cost+IFNULL((SELECT SUM(c.amount) FROM UNNEST(credits) c),0)) AS net_cost
+      SUM({NET_USD}) AS net_cost
     FROM `{TABLE_ID}`
     {filter_sql("prev_start")}
     GROUP BY 1,2,3
@@ -693,13 +700,13 @@ def load_leadership_drill(dim, value, start_day, end_day, services, projects, re
         bigquery.ScalarQueryParameter("dim_value", "STRING", value)]
     where = f"{filter_sql()} AND ({expr}) = @dim_value"
     daily = run_query(f"""
-    SELECT DATE(usage_start_time) AS usage_date, SUM(cost+IFNULL((SELECT SUM(c.amount) FROM UNNEST(credits) c),0)) AS net_cost
+    SELECT DATE(usage_start_time) AS usage_date, SUM({NET_USD}) AS net_cost
     FROM `{TABLE_ID}` {where} GROUP BY 1""", params, "leadership_drill_daily")
     resources = run_query(f"""
     SELECT COALESCE(NULLIF(resource.name,''),NULLIF(resource.global_name,''),'Resource not reported') AS resource,
       COALESCE(service.description,'Unspecified service') AS service,
       COALESCE(project.name,project.id,'Unspecified project') AS project,
-      SUM(cost+IFNULL((SELECT SUM(c.amount) FROM UNNEST(credits) c),0)) AS net_cost
+      SUM({NET_USD}) AS net_cost
     FROM `{TABLE_ID}` {where} GROUP BY 1,2,3 ORDER BY net_cost DESC LIMIT 25""", params, "leadership_drill_resources")
     for frame in (daily, resources):
         frame["net_cost"] = pd.to_numeric(frame["net_cost"], errors="coerce").fillna(0)
@@ -710,18 +717,18 @@ def load_leadership_drill(dim, value, start_day, end_day, services, projects, re
 def load_resource_counts(start_day, end_day, services, projects, regions, skus, currency, resource_search, org=NO_ORG):
     """Billed resources and projects in the selected period, and how many resources roll up to a business unit.
 
-    Transient resources (BigQuery jobs, Dataproc batches, Dataflow jobs: millions of IDs) and resources that cost less than 1
+    Transient resources (BigQuery jobs, Dataproc batches, Dataflow jobs: millions of IDs) and resources that cost less than $0.01
     are left out, so the count reflects the inventory leaders can act on."""
     res = "COALESCE(NULLIF(resource.global_name,''),NULLIF(resource.name,''))"
     sql = f"""
     WITH r AS (
       SELECT {res} AS res, ANY_VALUE(project.id) AS project, LOGICAL_OR({bl.unit_sql()}) AS mapped,
-        SUM(cost+IFNULL((SELECT SUM(c.amount) FROM UNNEST(credits) c),0)) AS net_cost
+        SUM({NET_USD}) AS net_cost
       FROM `{TABLE_ID}`
       {filter_sql()}
         AND {res} IS NOT NULL AND NOT REGEXP_CONTAINS({res}, r'/(jobs|batches)/')
       GROUP BY 1
-      HAVING net_cost >= 1)
+      HAVING net_cost >= 0.01)
     SELECT COUNT(*) AS resources, COUNTIF(mapped) AS mapped, COUNT(DISTINCT project) AS projects FROM r
     """
     row = run_query(sql, query_params(start_day,end_day,services,projects,regions,skus,currency,resource_search,org), "resource_counts").iloc[0]
@@ -756,11 +763,11 @@ def load_owner_feature_cost(start_day, end_day, services, projects, regions, sku
     SELECT COALESCE({_label_value_sql('labels', 'owner')}, {_label_value_sql('project.labels', 'owner')}, '{NOT_LABELED}') AS owner_name,
       COALESCE({_label_value_sql('labels', 'feature')}, {_label_value_sql('project.labels', 'feature')}, {mapped} '{NOT_LABELED}') AS feature_name,
       IFNULL(project.id, '') AS project_id,
-      IFNULL(currency,'UNKNOWN') AS currency,
-      SUM(cost+IFNULL((SELECT SUM(c.amount) FROM UNNEST(credits) c),0)) AS net_cost
+      'USD' AS currency,
+      SUM({NET_USD}) AS net_cost
     FROM `{TABLE_ID}` {join}
     {filter_sql()}
-    GROUP BY 1, 2, 3, 4
+    GROUP BY 1, 2, 3
     """
     return run_query(sql, query_params(start_day, end_day, services, projects, regions, skus, currency, resource_search, org), "owner_feature_cost")
 
@@ -920,8 +927,8 @@ def load_vm_costs(projects, start_day, end_day, currency):
     """Billed compute cost (cores, RAM, OS licences) per VM, joined by the instance ID in the billing export."""
     sql = rf"""
     SELECT REGEXP_EXTRACT(resource.global_name, r'/instances/(\d+)$') AS instance_id,
-      IFNULL(currency,'UNKNOWN') AS currency,
-      SUM(cost + IFNULL((SELECT SUM(c.amount) FROM UNNEST(credits) c),0)) AS net_cost
+      'USD' AS currency,
+      SUM({NET_USD}) AS net_cost
     FROM `{TABLE_ID}`
     WHERE usage_start_time >= TIMESTAMP(@start_day)
       AND usage_start_time < TIMESTAMP(DATE_ADD(@end_day, INTERVAL 1 DAY))
@@ -930,8 +937,7 @@ def load_vm_costs(projects, start_day, end_day, currency):
       AND REGEXP_CONTAINS(resource.global_name, r'/instances/\d+$')
       AND REGEXP_CONTAINS(sku.description, r'Instance (Core|Ram)|Licensing Fee')
       AND NOT REGEXP_CONTAINS(sku.description, r'(?i)commit')
-      AND (@currency='ALL' OR currency=@currency)
-    GROUP BY instance_id, currency
+    GROUP BY instance_id
     """
     params = [bigquery.ScalarQueryParameter("start_day", "DATE", start_day),
               bigquery.ScalarQueryParameter("end_day", "DATE", end_day),
@@ -1426,14 +1432,10 @@ with st.expander("More filters", expanded=False):
             help="Filter by specific billing SKU or meter.",
         )
     with mf2:
-        st.markdown('<div class="filter-label">Billing currency</div>', unsafe_allow_html=True)
-        currency_options = ["ALL"] + options["currencies"]
-        currency = st.selectbox(
-            "Billing currency", currency_options,
-            index=(currency_options.index("INR") if "INR" in currency_options else 0),
-            label_visibility="collapsed",
-            help="Filter to a single billing currency, or ALL to show every currency (totals won't be converted).",
-        )
+        st.markdown('<div class="filter-label">Reporting currency</div>', unsafe_allow_html=True)
+        currency = REPORT_CURRENCY
+        st.text_input("Reporting currency", "USD ($) · converted from billing currency", disabled=True,
+                      label_visibility="collapsed", help="All amounts are converted to USD with the billing export's currency_conversion_rate.")
     with mf3:
         st.markdown('<div class="filter-label">Resource name contains</div>', unsafe_allow_html=True)
         resource_search = st.text_input(
@@ -1639,8 +1641,10 @@ elif page == "Leadership":
             colors = bl.bu_colors()
             has_prev = sm["prev"]>0
             bu_options = score.loc[score["cost"]>0,"value"].tolist()
+            # Ambulatory is the default unit for the product cost view and everything that follows it (deep dive tab);
+            # the biggest unit is the fallback when Ambulatory has no spend in the current selection.
             if bu_options and st.session_state.get("bu_focus") not in bu_options:
-                st.session_state["bu_focus"] = bu_options[0]
+                st.session_state["bu_focus"] = DEFAULT_BU if DEFAULT_BU in bu_options else bu_options[0]
             found = bl.insights(billing,score,fmt_money)
 
             def open_or_focus(dim,value):
@@ -1706,6 +1710,11 @@ elif page == "Leadership":
             projects_t = tuple(MONITORING_PROJECTS)
             vm_signature = (str(start_day),str(end_day),projects_t,currency)
             recs = None
+            # Load VM utilization automatically (once per date range / projects / currency); a failed attempt is not retried on every rerun
+            if (st.session_state.get("finops_vm_signature")!=vm_signature
+                    and st.session_state.get("exec_vm_attempt")!=vm_signature):
+                st.session_state["exec_vm_attempt"] = vm_signature
+                load_vm_bundle(projects_t,start_day,end_day,currency)
             if st.session_state.get("finops_vm_signature")==vm_signature:
                 vm_data = st.session_state["finops_vm_data"]
                 window_start = datetime.combine(start_day,dtime.min,tzinfo=timezone.utc)
@@ -1752,9 +1761,9 @@ elif page == "Leadership":
             st.markdown('<div style="height:6px"></div>',unsafe_allow_html=True)
             if recs is None:
                 note,load_col = st.columns([4,1])
-                note.info(f"Underutilized candidates, rightsizing savings and the watchlist need VM CPU/RAM history (project(s): {', '.join(projects_t)}). "
-                          "Loading it once also serves the **CPU & RAM** view.")
-                if load_col.button("Load VM utilization",type="primary",key="exec_vm_load",use_container_width=True):
+                note.warning(f"VM utilization could not be loaded (project(s): {', '.join(projects_t)}), so underutilized candidates, "
+                             "rightsizing savings and the watchlist are not shown.")
+                if load_col.button("Retry VM utilization",type="primary",key="exec_vm_load",use_container_width=True):
                     load_vm_bundle(projects_t,start_day,end_day,currency)
                     st.rerun()
 
@@ -1774,21 +1783,27 @@ elif page == "Leadership":
             ]),unsafe_allow_html=True)
 
             if bu_options:
-                vp0,vp1,_spacer = st.columns([0.62,1.6,2.8],vertical_alignment="center")
-                vp0.markdown('<div class="view-label">Product view for</div>',unsafe_allow_html=True)
-                focus = vp1.selectbox("Product cost view for",bu_options,key="bu_focus",format_func=bl.bu_name,label_visibility="collapsed")
-                vm_savings = (down[down[bl.BU]==focus].groupby(bl.APP)["monthly_saving"].sum().to_dict() if down is not None else None)
-                st.markdown(bl.panel_row([
-                    bl.html_card(f"{bl.bu_name(focus)} · product cost view",
-                                 "Business unit → feature cluster → product · potential = VM rightsizing savings per month",
-                                 bl.product_table_html(billing,focus,vm_savings,fmt_money)),
-                    bl.html_card("Recommended leadership actions","Move from opportunity to verified savings",bl.actions_html(found)),
-                ],cols="minmax(0,1.7fr) minmax(0,1fr)"),unsafe_allow_html=True)
-                if found:
-                    _pad,pill_col = st.columns([1.7,1])
-                    with pill_col:
-                        st.pills("Open action",list(range(1,min(len(found),5)+1)),selection_mode="single",key="exec_act_pick",
-                                 format_func=lambda n: f"#{n}",on_change=on_action_pick)
+                # Product cost view (with its business-unit picker in the card header) next to the leadership actions
+                # (with their "open" pills inside the card) — both are real bordered cards, so nothing floats between panels.
+                with st.container(key="lead_prod_row"):
+                    p_col,a_col = st.columns([1.7,1])
+                    with p_col:
+                        with card("lead_prod"):
+                            h_col,s_col = st.columns([2.3,1],vertical_alignment="top")
+                            with s_col:
+                                focus = st.selectbox("Business unit",bu_options,key="bu_focus",format_func=bl.bu_name)
+                            with h_col:
+                                card_header(f"{bl.bu_name(focus)} · product cost view",
+                                            "Business unit → feature cluster → product · potential = VM rightsizing savings per month")
+                            vm_savings = (down[down[bl.BU]==focus].groupby(bl.APP)["monthly_saving"].sum().to_dict() if down is not None else None)
+                            st.markdown(f'<div class="xbody">{bl.product_table_html(billing,focus,vm_savings,fmt_money)}</div>',unsafe_allow_html=True)
+                    with a_col:
+                        with card("lead_actions"):
+                            card_header("Recommended leadership actions","Move from opportunity to verified savings")
+                            st.markdown(bl.actions_html(found),unsafe_allow_html=True)
+                            if found:
+                                st.pills("Open action",list(range(1,min(len(found),5)+1)),selection_mode="single",key="exec_act_pick",
+                                         format_func=lambda n: f"#{n}",on_change=on_action_pick)
 
             st.markdown(bl.section("Explore further","drill into a unit, what changed and how well spend is mapped"),unsafe_allow_html=True)
             t_dive,t_mix,t_score,t_change,t_matrix,t_health = st.tabs(["Business unit deep dive","Spend breakdown","Scorecard",
@@ -1802,7 +1817,7 @@ elif page == "Leadership":
                     rows = bl.select_rows(billing,bl.BU,focus)
                     color = colors.get(focus,bl.BASE_COLOR)
                     head_col,open_col = st.columns([3,1])
-                    head_col.caption(f"Showing **{bl.bu_name(focus)}** · change the unit in **Product view for** above."
+                    head_col.caption(f"Showing **{bl.bu_name(focus)}** · change the unit in the **product cost view** above."
                                      + (" Applications in the BU billing plan: " + ", ".join(bl.MAPPING["apps_by_bu"][focus]) if focus in bl.MAPPING["apps_by_bu"] else ""))
                     if open_col.button("Open full details →",key="bu_focus_open",use_container_width=True):
                         st.session_state["bill_open"] = (bl.BU,focus)
@@ -2451,7 +2466,7 @@ elif page == "CPU & RAM":
 elif page == "Data & export":
     with card("data"):
         card_header("Aggregated billing data",
-                    "Summary grouped by usage date, service, project, region and SKU. Amounts remain in the source currency.")
+                    "Summary grouped by usage date, service, project, region and SKU. Amounts are converted to USD.")
         st.dataframe(df.sort_values("net_cost", ascending=False).head(20000), use_container_width=True, hide_index=True)
         st.caption("The table displays at most 20,000 summary rows.")
         dl_a, dl_b, _ = st.columns([1, 1, 2])
