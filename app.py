@@ -88,7 +88,8 @@ SVG_CHECK = _icon('<path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline point
 SVG_USERS = _icon('<path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/>', "#0891B2")
 SVG_SERVER = _icon('<rect x="2" y="3" width="20" height="8" rx="2"/><rect x="2" y="13" width="20" height="8" rx="2"/><line x1="6" y1="7" x2="6.01" y2="7"/><line x1="6" y1="17" x2="6.01" y2="17"/>', "#8B5CF6")
 
-NAV_ITEMS = ["Overview", "Leadership", "CPU & RAM", "Cost breakdowns", "Resource explorer", "Data & export"]
+LEADERSHIP_PAGE = "Leadership Dashboard"
+NAV_ITEMS = [LEADERSHIP_PAGE, "Overview", "CPU & RAM", "Cost breakdowns", "Resource explorer", "Data & export"]
 PERIODS = {"Last 7 days": 7, "Last 30 days": 30, "Last 60 days": 60, "Last 90 days": 90, "Last 180 days": 180}
 
 # ─── CSS — Global design system ──────────────────────────────────────────────
@@ -166,7 +167,7 @@ section[data-testid="stSidebar"] div[role="radiogroup"] > label:hover {backgroun
 section[data-testid="stSidebar"] div[role="radiogroup"] > label:has(input:checked) {background: #EAF1FE;}
 section[data-testid="stSidebar"] div[role="radiogroup"] > label:has(input:checked) p {color: #2563EB; font-weight: 600;}
 section[data-testid="stSidebar"] div[role="radiogroup"] > label:has(input:checked)::before {background-color: #2563EB;}
-section[data-testid="stSidebar"] div[role="radiogroup"] > label:nth-of-type(1)::before {
+section[data-testid="stSidebar"] div[role="radiogroup"] > label:nth-of-type(2)::before {
     -webkit-mask-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><rect x='3' y='3' width='7' height='7' rx='1.5'/><rect x='14' y='3' width='7' height='7' rx='1.5'/><rect x='3' y='14' width='7' height='7' rx='1.5'/><rect x='14' y='14' width='7' height='7' rx='1.5'/></svg>");
     mask-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><rect x='3' y='3' width='7' height='7' rx='1.5'/><rect x='14' y='3' width='7' height='7' rx='1.5'/><rect x='3' y='14' width='7' height='7' rx='1.5'/><rect x='14' y='14' width='7' height='7' rx='1.5'/></svg>");
 }
@@ -187,7 +188,7 @@ section[data-testid="stSidebar"] div[role="radiogroup"] > label:nth-of-type(6)::
     mask-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><path d='M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4'/><polyline points='7 10 12 15 17 10'/><line x1='12' y1='15' x2='12' y2='3'/></svg>");
 }
 
-section[data-testid="stSidebar"] div[role="radiogroup"] > label:nth-of-type(2)::before {
+section[data-testid="stSidebar"] div[role="radiogroup"] > label:nth-of-type(1)::before {
     -webkit-mask-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><rect x='2' y='7' width='20' height='14' rx='2'/><path d='M16 7V5a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v2'/><path d='M2 13h20'/></svg>");
     mask-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><rect x='2' y='7' width='20' height='14' rx='2'/><path d='M16 7V5a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v2'/><path d='M2 13h20'/></svg>");
 }
@@ -1492,7 +1493,7 @@ n_days = max(int(daily_all["usage_date"].nunique()), 1)
 credit_share = abs(credits_total) / gross * 100 if gross else 0
 net_share = net / gross * 100 if gross else 0
 
-if page != "Leadership":
+if page != LEADERSHIP_PAGE:
     k1, k2, k3, k4, k5 = st.columns(5)
     with k1:
         render_kpi_card("Net Cost After Credits", money(net, cur_label), f"{net_share:.1f}% of gross cost",
@@ -1618,7 +1619,7 @@ if page == "Overview":
 
 
 # ─── PAGE: Leadership (executive overview + VM efficiency) ──────────────────
-elif page == "Leadership":
+elif page == LEADERSHIP_PAGE:
     st.markdown(vc.KPI_CSS + bl.EXEC_CSS + bl.LEAD_CSS, unsafe_allow_html=True)
     tab_cost,tab_vm = st.tabs(["Executive overview","VM efficiency"])
     with tab_cost:
