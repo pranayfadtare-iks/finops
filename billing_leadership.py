@@ -1049,10 +1049,31 @@ def card_layout(fig, title, subtitle="", height=380, legend=False):
     return fig
 
 
+def _change_labels(cur, prev, fmt_money):
+    """(bar text, text colour, hover text) per bar: change of ``cur`` vs ``prev`` (▲ red = more spend, ▼ green = less)."""
+    texts, colors, changes = [], [], []
+    for c, p in zip(cur, prev):
+        delta = c - p
+        if p <= 0:
+            text, color, change = ("new" if c > 0 else ""), "#64748B", "no spend in the previous period"
+        elif abs(delta) < 0.5:
+            text, color, change = "0%", "#64748B", "no change"
+        else:
+            text = f"{'▲' if delta > 0 else '▼'} {abs(delta) / p:.0%}"
+            color = UP_COLOR if delta > 0 else DOWN_COLOR
+            change = arrow_text(delta, delta / p, fmt_money)
+        texts.append(text)
+        colors.append(color)
+        changes.append(change)
+    return texts, colors, changes
+
+
 def period_trend(daily, start_day, end_day, fmt_money, height=380):
-    """Grouped bars: spend per day / week / 30 days of the selected period next to the same slice of the previous period."""
+    """Weekly comparison: week 1..N of the selected dates next to week 1..N of the previous period of equal length.
+
+    Always weekly (whatever the range); the current week is labelled with its change (▲ red = more spend, ▼ green = less)."""
     days = (pd.Timestamp(end_day) - pd.Timestamp(start_day)).days + 1
-    step, unit = (1, "Daily") if days <= 14 else (7, "Weekly") if days <= 92 else (30, "30-day")
+    step = 7
     d = daily.groupby(["period", "usage_date"], as_index=False)["net_cost"].sum()
     d["usage_date"] = pd.to_datetime(d["usage_date"])
     start, prev_start = pd.Timestamp(start_day), pd.Timestamp(start_day) - pd.Timedelta(days=days)
@@ -1061,19 +1082,26 @@ def period_trend(daily, start_day, end_day, fmt_money, height=380):
         b = ((rows["usage_date"] - origin).dt.days // step).clip(lower=0, upper=n - 1)
         return rows.groupby(b)["net_cost"].sum().reindex(range(n), fill_value=0.0)
     cur, prev = buckets(d[d["period"] == "current"], start), buckets(d[d["period"] == "previous"], prev_start)
-    labels = [(start + pd.Timedelta(days=i * step)).strftime("%d %b") for i in range(n)]
-    prev_labels = [(prev_start + pd.Timedelta(days=i * step)).strftime("%d %b") for i in range(n)]
+    cur_dates = [(start + pd.Timedelta(days=i * step)).strftime("%d %b") for i in range(n)]
+    prev_dates = [(prev_start + pd.Timedelta(days=i * step)).strftime("%d %b") for i in range(n)]
+    labels = [f"Week {i + 1}<br><span style='font-size:10px;color:#94A3B8'>{cur_dates[i]}</span>" for i in range(n)]
+    weeks = [f"Week {i + 1}" for i in range(n)]
+    texts, colors, changes = _change_labels(cur.values, prev.values, fmt_money)
     fig = go.Figure()
-    fig.add_trace(go.Bar(x=labels, y=prev.values, name="Previous", marker=dict(color="#A9C8F7", cornerradius=4),
-                         customdata=np.column_stack([prev_labels, prev.map(fmt_money).values]),
-                         hovertemplate="Previous period · from %{customdata[0]}<br><b>%{customdata[1]}</b><extra></extra>"))
-    fig.add_trace(go.Bar(x=labels, y=cur.values, name="Latest", marker=dict(color=BASE_COLOR, cornerradius=4),
-                         customdata=cur.map(fmt_money).values, hovertemplate="From %{x}<br><b>%{customdata}</b><extra></extra>"))
-    fig.update_layout(barmode="group", bargap=0.38, bargroupgap=0.08)
-    partial = " · last bar is a partial " + ("week" if step == 7 else "period") if days % step else ""
-    card_layout(fig, "Cloud spend trend by month",f"{unit} net cost · selected period vs the one before it{partial}", height, legend=True)
+    fig.add_trace(go.Bar(x=labels, y=prev.values, name="Previous period weeks", marker=dict(color="#A9C8F7", cornerradius=4),
+                         customdata=np.column_stack([weeks, prev_dates, prev.map(fmt_money).values]),
+                         hovertemplate="<b>%{customdata[0]}</b> · previous period<br>Week from %{customdata[1]}<br><b>%{customdata[2]}</b><extra></extra>"))
+    fig.add_trace(go.Bar(x=labels, y=cur.values, name="Current period weeks", marker=dict(color=BASE_COLOR, cornerradius=4),
+                         text=texts, textposition="outside", cliponaxis=False, textfont=dict(size=11, color=colors, family=FONT),
+                         customdata=np.column_stack([weeks, cur_dates, cur.map(fmt_money).values, changes]),
+                         hovertemplate="<b>%{customdata[0]}</b> · current period<br>Week from %{customdata[1]}<br><b>%{customdata[2]}</b>"
+                                       "<br>vs same week before: %{customdata[3]}<extra></extra>"))
+    fig.update_layout(barmode="group", bargap=0.32, bargroupgap=0.08)
+    partial = f" · week {n} is partial ({days % 7} day{'s' if days % 7 != 1 else ''})" if days % 7 else ""
+    card_layout(fig, "Cloud spend: weekly comparison",
+                f"Each week's net cost vs the same week of the previous period · ▲ red = more, ▼ green = less{partial}", height, legend=True)
     fig.update_xaxes(type="category")
-    fig.update_yaxes(tickformat=",.2s", rangemode="tozero")
+    fig.update_yaxes(tickformat=",.2s", rangemode="tozero", range=[0, float(max(cur.max(), prev.max(), 1)) * 1.18])
     return fig
 
 
