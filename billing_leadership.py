@@ -1077,18 +1077,19 @@ def period_trend(daily, start_day, end_day, fmt_money, height=380):
     return fig
 
 
-def service_comparison(df, start_day, end_day, fmt_money, n=10):
-    """Grouped horizontal bars: net cost per service in the previous period vs the selected one (same length, back to back).
+def period_comparison(df, dim, start_day, end_day, fmt_money, n=10, title=None, height=None):
+    """Grouped horizontal bars: net cost per ``dim`` value in the previous period vs the selected one (same length, back to back).
 
-    Top ``n`` services by the larger of the two periods; the current bar is labelled with its change (red = up, green = down)."""
-    t = group_table(df, "service")
+    Top ``n`` values by the larger of the two periods; the current bar is labelled with its change (red = up, green = down).
+    ``height`` forces a card height so two comparisons can sit side by side at the same size."""
+    t = group_table(df, dim)
     if t.empty:
         return None
     t = t[(t["cost"] > 0) | (t["prev"] > 0)]
     if t.empty:
         return None
     t = t.assign(peak=np.maximum(t["cost"], t["prev"])).sort_values("peak", ascending=False).head(n)
-    names = _short_unique([display("service", v) for v in t["value"]], 30)
+    names = _short_unique([display(dim, v) for v in t["value"]], 30)
     days = (pd.Timestamp(end_day) - pd.Timestamp(start_day)).days + 1
     prev_start, prev_end = pd.Timestamp(start_day) - pd.Timedelta(days=days), pd.Timestamp(start_day) - pd.Timedelta(days=1)
     cur_range = f"{pd.Timestamp(start_day):%d %b} – {pd.Timestamp(end_day):%d %b}"
@@ -1109,22 +1110,42 @@ def service_comparison(df, start_day, end_day, fmt_money, n=10):
         hover_change.append(arrow_text(r["delta"], r["delta_pct"], fmt_money) if r["prev"] > 0 else "new this period")
 
     fig = go.Figure()
-    fig.add_trace(go.Bar(y=names, x=t["prev"], orientation="h", name=f"Previous ({prev_range})", marker=dict(color="#A9C8F7", cornerradius=4),
+    fig.add_trace(go.Bar(y=names, x=t["prev"], orientation="h", name="Previous", marker=dict(color="#A9C8F7", cornerradius=4),
                          text=[fmt_money(v) for v in t["prev"]], textposition="outside", cliponaxis=False,
                          textfont=dict(size=10.5, color="#94A3B8", family=FONT),
                          customdata=[fmt_money(v) for v in t["prev"]],
                          hovertemplate=f"<b>%{{y}}</b><br>Previous ({prev_range}): %{{customdata}}<extra></extra>"))
-    fig.add_trace(go.Bar(y=names, x=t["cost"], orientation="h", name=f"Current ({cur_range})", marker=dict(color=BASE_COLOR, cornerradius=4),
+    fig.add_trace(go.Bar(y=names, x=t["cost"], orientation="h", name="Current", marker=dict(color=BASE_COLOR, cornerradius=4),
                          text=cur_text, textposition="outside", cliponaxis=False, textfont=dict(size=11, color=cur_color, family=FONT),
                          customdata=np.column_stack([[fmt_money(v) for v in t["cost"]], hover_change]),
                          hovertemplate=f"<b>%{{y}}</b><br>Current ({cur_range}): %{{customdata[0]}}<br>Change: %{{customdata[1]}}<extra></extra>"))
     fig.update_layout(barmode="group", bargap=0.28, bargroupgap=0.06)
-    card_layout(fig, "Service cost: previous vs current",
-                f"Net cost per service · {prev_range} vs {cur_range} · ▲ red = more spend, ▼ green = less",
-                max(320, 120 + 46 * len(t)), legend=True)
+    label = TITLES.get(dim, dim).lower()
+    card_layout(fig, title or f"{TITLES.get(dim, dim)} cost: previous vs current",
+                f"Net cost per {label} · {prev_range} vs {cur_range} · ▲ red = more spend, ▼ green = less",
+                height or comparison_height(len(t)), legend=True)
     fig.update_yaxes(autorange="reversed", showgrid=False, automargin=True, tickfont=dict(color="#334155", size=12))
-    fig.update_xaxes(showticklabels=False, showgrid=False, range=[0, float(t["peak"].max()) * 1.32])
+    fig.update_xaxes(showticklabels=False, showgrid=False, range=[0, float(t["peak"].max()) * 1.5])
     return fig
+
+
+def comparison_height(rows):
+    """Card height for ``rows`` grouped bars in ``period_comparison``."""
+    return max(320, 120 + 46 * rows)
+
+
+def comparison_rows(df, dim, n=10):
+    """How many bars ``period_comparison`` will draw for ``dim`` (to give side-by-side cards one height)."""
+    t = group_table(df, dim)
+    return int(min(n, ((t["cost"] > 0) | (t["prev"] > 0)).sum())) if not t.empty else 0
+
+
+def service_comparison(df, start_day, end_day, fmt_money, n=10, height=None):
+    return period_comparison(df, "service", start_day, end_day, fmt_money, n, "Service cost comparison: previous vs current", height)
+
+
+def bu_comparison(df, start_day, end_day, fmt_money, n=10, height=None):
+    return period_comparison(df, BU, start_day, end_day, fmt_money, n, "Business unit cost comparison: previous vs current", height)
 
 
 def bu_bars_html(score, colors, fmt_money):
