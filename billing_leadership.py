@@ -1077,6 +1077,56 @@ def period_trend(daily, start_day, end_day, fmt_money, height=380):
     return fig
 
 
+def service_comparison(df, start_day, end_day, fmt_money, n=10):
+    """Grouped horizontal bars: net cost per service in the previous period vs the selected one (same length, back to back).
+
+    Top ``n`` services by the larger of the two periods; the current bar is labelled with its change (red = up, green = down)."""
+    t = group_table(df, "service")
+    if t.empty:
+        return None
+    t = t[(t["cost"] > 0) | (t["prev"] > 0)]
+    if t.empty:
+        return None
+    t = t.assign(peak=np.maximum(t["cost"], t["prev"])).sort_values("peak", ascending=False).head(n)
+    names = _short_unique([display("service", v) for v in t["value"]], 30)
+    days = (pd.Timestamp(end_day) - pd.Timestamp(start_day)).days + 1
+    prev_start, prev_end = pd.Timestamp(start_day) - pd.Timedelta(days=days), pd.Timestamp(start_day) - pd.Timedelta(days=1)
+    cur_range = f"{pd.Timestamp(start_day):%d %b} – {pd.Timestamp(end_day):%d %b}"
+    prev_range = f"{prev_start:%d %b} – {prev_end:%d %b}"
+
+    cur_text, cur_color, hover_change = [], [], []
+    for _, r in t.iterrows():
+        if r["prev"] <= 0:
+            change, color = "new", "#64748B"
+        elif abs(r["delta"]) < 0.5:
+            change, color = "no change", "#64748B"
+        else:
+            pct = f"{abs(r['delta_pct']):.0%}" if pd.notna(r["delta_pct"]) else ""
+            change = f"{'▲' if r['delta'] > 0 else '▼'} {pct}".strip()
+            color = UP_COLOR if r["delta"] > 0 else DOWN_COLOR
+        cur_text.append(f"<b>{fmt_money(r['cost'])}</b>  {change}")
+        cur_color.append(color)
+        hover_change.append(arrow_text(r["delta"], r["delta_pct"], fmt_money) if r["prev"] > 0 else "new this period")
+
+    fig = go.Figure()
+    fig.add_trace(go.Bar(y=names, x=t["prev"], orientation="h", name=f"Previous ({prev_range})", marker=dict(color="#A9C8F7", cornerradius=4),
+                         text=[fmt_money(v) for v in t["prev"]], textposition="outside", cliponaxis=False,
+                         textfont=dict(size=10.5, color="#94A3B8", family=FONT),
+                         customdata=[fmt_money(v) for v in t["prev"]],
+                         hovertemplate=f"<b>%{{y}}</b><br>Previous ({prev_range}): %{{customdata}}<extra></extra>"))
+    fig.add_trace(go.Bar(y=names, x=t["cost"], orientation="h", name=f"Current ({cur_range})", marker=dict(color=BASE_COLOR, cornerradius=4),
+                         text=cur_text, textposition="outside", cliponaxis=False, textfont=dict(size=11, color=cur_color, family=FONT),
+                         customdata=np.column_stack([[fmt_money(v) for v in t["cost"]], hover_change]),
+                         hovertemplate=f"<b>%{{y}}</b><br>Current ({cur_range}): %{{customdata[0]}}<br>Change: %{{customdata[1]}}<extra></extra>"))
+    fig.update_layout(barmode="group", bargap=0.28, bargroupgap=0.06)
+    card_layout(fig, "Service cost: previous vs current",
+                f"Net cost per service · {prev_range} vs {cur_range} · ▲ red = more spend, ▼ green = less",
+                max(320, 120 + 46 * len(t)), legend=True)
+    fig.update_yaxes(autorange="reversed", showgrid=False, automargin=True, tickfont=dict(color="#334155", size=12))
+    fig.update_xaxes(showticklabels=False, showgrid=False, range=[0, float(t["peak"].max()) * 1.32])
+    return fig
+
+
 def bu_bars_html(score, colors, fmt_money):
     """Rows of 'name · bar · amount (change)' per business unit, biggest first."""
     s = score[score["cost"] > 0]

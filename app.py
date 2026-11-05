@@ -1776,6 +1776,11 @@ elif page == LEADERSHIP_PAGE:
                 pie_card(billing,bl.BU,"exec_bu_donut",pills=False,color_map=colors,height=row_h,title="Spend by business unit",
                          subtitle="Share of total selected spend · click a slice to open the unit")
 
+            # Service cost: the selected dates vs the previous period of the same length (from the same billing data)
+            svc_fig = bl.service_comparison(billing,start_day,end_day,fmt_money)
+            if svc_fig is not None:
+                chart_card("svc_compare",svc_fig,"exec_svc_compare")
+
             st.markdown(bl.panel_row([
                 bl.html_card("Spend by business unit","Net cost per unit · change vs the previous period",bl.bu_bars_html(score,colors,fmt_money)),
                 bl.html_card("Top optimization opportunities","Estimated monthly savings by action",
