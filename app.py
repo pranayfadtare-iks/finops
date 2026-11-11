@@ -904,7 +904,8 @@ def load_unlabelled_top_resources(kind, start_day, end_day, prev_start, services
       COALESCE(NULLIF(resource.name,''),NULLIF(resource.global_name,''),'Resource not reported') AS resource,
       COALESCE(NULLIF(location.region,''),'Unspecified region') AS region,
       SUM(IF(usage_start_time >= TIMESTAMP(@start_day), {NET_USD}, 0)) AS net_cost,
-      SUM(IF(usage_start_time < TIMESTAMP(@start_day), {NET_USD}, 0)) AS prev_cost
+      SUM(IF(usage_start_time < TIMESTAMP(@start_day), {NET_USD}, 0)) AS prev_cost,
+      ARRAY_AGG(TO_JSON_STRING(labels) ORDER BY usage_start_time DESC LIMIT 1)[OFFSET(0)] AS resource_labels
     FROM `{TABLE_ID}` {join}
     {filter_sql("prev_start")}
       AND IFNULL(project.id,'') NOT IN UNNEST(@exclude_projects)
@@ -921,12 +922,13 @@ def load_unlabelled_top_resources(kind, start_day, end_day, prev_start, services
 
 
 def build_unlabelled_resource_table(raw, donut_total):
-    """Resource-level grouped table (same columns as the grouped table, plus Resource after Project)."""
-    columns = ["Business unit", "Feature cluster", "Product", "Service", "Project", "Resource", "Region", "Net cost", "Previous period",
-               "Change", "Change %", "Share of total"]
+    """Grouped table that starts with the resource name and its labels (a list of 'key: value' chips, or ['—'] when it has none)."""
+    columns = ["Business unit", "Feature cluster", "Product", "Service", "Project", "Resource name", "Resource labels", "Region", "Net cost",
+               "Previous period", "Change", "Change %", "Share of total"]
     if raw is None or raw.empty:
         return pd.DataFrame(columns=columns)
     out = raw.copy()
+    out["labels_list"] = out["resource_labels"].map(_label_pairs)
     out["net_cost"] = pd.to_numeric(out["net_cost"], errors="coerce").fillna(0)
     out["prev_cost"] = pd.to_numeric(out["prev_cost"], errors="coerce").fillna(0)
     out["business_unit"] = out["business_unit"].map(bl.bu_name)
@@ -935,8 +937,8 @@ def build_unlabelled_resource_table(raw, donut_total):
     out["delta"] = out["net_cost"] - out["prev_cost"]
     out["delta_pct"] = (out["delta"] / out["prev_cost"] * 100).where(out["prev_cost"] > 0)
     out["share"] = out["net_cost"] / donut_total * 100 if donut_total > 0 else float("nan")
-    out = out[["business_unit", "feature_cluster", "application", "service", "project_name", "resource", "region", "net_cost", "prev_cost",
-               "delta", "delta_pct", "share"]]
+    out = out[["business_unit", "feature_cluster", "application", "service", "project_name", "resource", "labels_list", "region", "net_cost",
+               "prev_cost", "delta", "delta_pct", "share"]]
     out.columns = columns
     return out.sort_values("Net cost", ascending=False).reset_index(drop=True)
 
@@ -988,13 +990,23 @@ def _label_dict(raw_json):
             for i in items or [] if isinstance(i, dict)}
 
 
-def _labels_text(raw_json):
-    """'key=value; key=value' text from the JSON text of a labels array."""
+NO_LABELS = "—"
+
+
+def _label_pairs(raw_json):
+    """['key: value', ...] from the JSON text of a labels array, sorted by key; ['—'] when there are no (usable) labels."""
     try:
         items = json.loads(raw_json) if raw_json else []
-    except ValueError:
-        return ""
-    return "; ".join(f"{i.get('key')}={i.get('value')}" for i in items or [] if isinstance(i, dict))
+    except (TypeError, ValueError):
+        items = []
+    pairs = sorted((str(i.get("key") or "").strip(), str(i.get("value") or "").strip())
+                   for i in (items if isinstance(items, list) else []) if isinstance(i, dict) and str(i.get("key") or "").strip())
+    return [f"{k}: {v}" if v else k for k, v in pairs] or [NO_LABELS]
+
+
+def _labels_text(raw_json):
+    """'key: value; key: value' text from the JSON text of a labels array ('—' when there are none)."""
+    return "; ".join(_label_pairs(raw_json))
 
 
 def build_unlabelled_resources(raw, owner_map):
@@ -1373,7 +1385,7 @@ def render_bill_details(dim, value, billing, filters, fmt_money, start_day, end_
 
 
 def render_unlabelled_details(kind, table, projects_n, donut_unlabelled, fmt_money, start_day, end_day, signature, load_resources,
-                              load_by_resource):
+                              resource_table=None, resource_error=""):
     """Body of the pop-up opened from the '(not labeled)' slice of the Overview owner / feature donut."""
     noun = kind
     if table.empty:
@@ -1394,21 +1406,21 @@ def render_unlabelled_details(kind, table, projects_n, donut_unlabelled, fmt_mon
 
     tab_group, tab_res = st.tabs(["Grouped cost", "Resource detail"])
     with tab_group:
-        by_resource = st.toggle("Group by resource name", key=f"unl_by_res_{kind}",
-                                help=f"Adds a Resource column and splits each row per resource. Shows the {UNLABELLED_RESOURCE_LIMIT:,} biggest "
-                                     "resources only, because there are millions of small ones. Runs one more BigQuery query.")
-        shown, coverage = table, ""
-        if by_resource:
-            try:
-                with loading_overlay("Loading resources", "Grouping the unlabelled cost by resource name."):
-                    shown = load_by_resource()
-                covered = float(shown["Net cost"].sum())
-                coverage = (f"Top {len(shown):,} resources = {fmt_money(covered)} of the {fmt_money(net_total)} unlabelled "
-                            f"({covered / net_total:.0%}). Smaller resources are not listed.").replace("$", "\\$") if net_total > 0 else ""
-            except Exception as exc:
-                st.error("Could not load the resource-level view.")
-                st.code(str(exc))
+        # Resource name and Resource labels are always part of this table (no switch). If that query failed, fall back to the coarse table.
+        by_resource = resource_table is not None and not resource_table.empty
+        shown, coverage = (resource_table if by_resource else table), ""
+        if resource_error:
+            st.warning("Could not load resource names and labels, so the table below has no resource columns.")
+            st.code(resource_error)
+        elif by_resource:
+            covered = float(shown["Net cost"].sum())
+            coverage = (f"All {len(shown):,} resources are listed." if len(shown) < UNLABELLED_RESOURCE_LIMIT else
+                        f"The {len(shown):,} biggest resources are listed = {fmt_money(covered)} of the {fmt_money(net_total)} unlabelled "
+                        f"({covered / net_total:.0%}); there are millions of small ones.").replace("$", "\\$")
         st.dataframe(shown, use_container_width=True, hide_index=True, column_config={
+            "Resource name": st.column_config.TextColumn("Resource name", width="medium", help="resource.name, else resource.global_name"),
+            "Resource labels": st.column_config.ListColumn("Resource labels", width="large",
+                                                           help="Labels on the resource in the billing export. — = the resource has none."),
             "Net cost": st.column_config.NumberColumn("Net cost", format="%.0f"),
             "Previous period": st.column_config.NumberColumn("Previous period", format="%.0f"),
             "Change": st.column_config.NumberColumn("Change", format="%+.0f"),
@@ -1422,7 +1434,10 @@ def render_unlabelled_details(kind, table, projects_n, donut_unlabelled, fmt_mon
                                                                "or from cost that changed since the donut was loaded).")).replace("$", "\\$"))
         st.caption(f"{len(shown):,} rows. Share of total = share of all spend in the selected dates."
                    + (" Previous period = what the same resource cost before." if by_resource else ""))
-        st.download_button("Download CSV", data=shown.round(2).to_csv(index=False).encode("utf-8-sig"),
+        export = shown.copy()
+        if "Resource labels" in export:
+            export["Resource labels"] = export["Resource labels"].map(lambda labels: "; ".join(labels))   # chips -> 'key: value; key: value'
+        st.download_button("Download CSV", data=export.round(2).to_csv(index=False).encode("utf-8-sig"),
                            file_name=f"gcp_finops_unlabelled_{kind}{'_by_resource' if by_resource else ''}_{start_day}_{end_day}.csv",
                            mime="text/csv", key=f"unl_dl_{kind}")
     with tab_res:
@@ -1968,11 +1983,18 @@ if page == "Overview":
         unl_total = float(positive["net_cost"].sum())
         unl_donut = float(positive.loc[positive[UNLABELLED_FIELD[unl_kind]] == NOT_LABELED, "net_cost"].sum())
         unl_error, unl_table, unl_projects = "", pd.DataFrame(), 0
+        unl_resources, unl_resources_error = None, ""
+        unl_prev = previous_period_start(start_day, end_day)
         try:
-            with loading_overlay("Loading unlabelled cost", "Grouping it by business unit, service, project and region."):
-                unl_raw = _with_map_fallback(load_unlabelled_breakdown, unl_kind, start_day, end_day, previous_period_start(start_day, end_day),
-                                             *unl_filters, unl_exclude)
+            with loading_overlay("Loading unlabelled cost", "Grouping it by business unit, service, project, resource and region."):
+                unl_raw = _with_map_fallback(load_unlabelled_breakdown, unl_kind, start_day, end_day, unl_prev, *unl_filters, unl_exclude)
                 unl_table, unl_projects = build_unlabelled_table(unl_raw, unl_total)
+                try:   # resource names + labels: the table shows them by default; if this query fails the coarse table is still shown
+                    unl_resources = build_unlabelled_resource_table(
+                        _with_map_fallback(load_unlabelled_top_resources, unl_kind, start_day, end_day, unl_prev, *unl_filters, unl_exclude),
+                        unl_total)
+                except Exception as exc:
+                    unl_resources_error = str(exc)
         except Exception as exc:
             unl_error = str(exc)
         unl_sum = float(unl_table["Net cost"].sum()) if not unl_table.empty else 0.0
@@ -1990,9 +2012,7 @@ if page == "Overview":
                 unl_kind, unl_table, unl_projects, unl_donut, unl_fmt, start_day, end_day, unl_signature,
                 lambda: build_unlabelled_resources(
                     _with_map_fallback(load_unlabelled_resources, unl_kind, start_day, end_day, *unl_filters, unl_exclude), owner_map),
-                lambda: build_unlabelled_resource_table(
-                    _with_map_fallback(load_unlabelled_top_resources, unl_kind, start_day, end_day, previous_period_start(start_day, end_day),
-                                       *unl_filters, unl_exclude), unl_total))
+                unl_resources, unl_resources_error)
         show_unlabelled()
 
 

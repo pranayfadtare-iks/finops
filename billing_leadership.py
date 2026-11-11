@@ -982,7 +982,7 @@ EXEC_CSS = """
 .stApp [data-testid="stPills"] button[kind="pillsActive"]{background:#EAF1FE !important;border-color:#2563EB !important;color:#1D4ED8 !important}
 .stApp [data-testid="stSelectbox"] label p,.stApp [data-testid="stRadio"] > label p,.stApp [data-testid="stPills"] label p{
     font-size:11px !important;font-weight:600 !important;color:#64748B !important;text-transform:uppercase;letter-spacing:.06em}
-.stApp [data-testid="stRadio"] [role="radiogroup"] label p{font-size:13px;color:#334155}
+.stApp .block-container [data-testid="stRadio"] [role="radiogroup"] label p { font-size:13px; color:#334155 }
 .stApp [data-testid="stCaptionContainer"]{color:#64748B}
 
 /* ── Details pop-up ── */
