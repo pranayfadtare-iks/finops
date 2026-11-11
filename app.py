@@ -742,13 +742,8 @@ def _label_value_sql(label_array, key):
             f"AND TRIM(IFNULL(value, '')) NOT IN ('', 'none', 'na', 'n/a', 'null', '-') LIMIT 1)")
 
 
-@st.cache_data(ttl=CACHE_TTL, show_spinner=False)
-def load_owner_feature_cost(start_day, end_day, services, projects, regions, skus, currency, resource_search, org=NO_ORG, use_map=True):
-    """Net cost per (owner, feature, project) in ONE scan of the billing table (labels are the expensive columns).
-
-    Owner   = resource label 'owner',   else project label 'owner',   else '(not labeled)'.
-    Feature = resource label 'feature', else project label 'feature', else curated mapping table, else '(not labeled)'.
-    """
+def _owner_feature_sql(use_map=True):
+    """(WITH clause, join, owner expression, feature expression): the single definition of '(not labeled)' for the owner / feature donuts."""
     use_map = bool(use_map and FEATURE_MAP_TABLE)
     cte = f"""
     WITH fmap AS (
@@ -759,10 +754,23 @@ def load_owner_feature_cost(start_day, end_day, services, projects, regions, sku
     )""" if use_map else ""
     join = "LEFT JOIN fmap ON fmap.global_name = resource.global_name" if use_map else ""
     mapped = "fmap.mapped_feature," if use_map else ""
+    owner_sql = f"COALESCE({_label_value_sql('labels', 'owner')}, {_label_value_sql('project.labels', 'owner')}, '{NOT_LABELED}')"
+    feature_sql = f"COALESCE({_label_value_sql('labels', 'feature')}, {_label_value_sql('project.labels', 'feature')}, {mapped} '{NOT_LABELED}')"
+    return cte, join, owner_sql, feature_sql
+
+
+@st.cache_data(ttl=CACHE_TTL, show_spinner=False)
+def load_owner_feature_cost(start_day, end_day, services, projects, regions, skus, currency, resource_search, org=NO_ORG, use_map=True):
+    """Net cost per (owner, feature, project) in ONE scan of the billing table (labels are the expensive columns).
+
+    Owner   = resource label 'owner',   else project label 'owner',   else '(not labeled)'.
+    Feature = resource label 'feature', else project label 'feature', else curated mapping table, else '(not labeled)'.
+    """
+    cte, join, owner_sql, feature_sql = _owner_feature_sql(use_map)
     sql = f"""
     {cte}
-    SELECT COALESCE({_label_value_sql('labels', 'owner')}, {_label_value_sql('project.labels', 'owner')}, '{NOT_LABELED}') AS owner_name,
-      COALESCE({_label_value_sql('labels', 'feature')}, {_label_value_sql('project.labels', 'feature')}, {mapped} '{NOT_LABELED}') AS feature_name,
+    SELECT {owner_sql} AS owner_name,
+      {feature_sql} AS feature_name,
       IFNULL(project.id, '') AS project_id,
       'USD' AS currency,
       SUM({NET_USD}) AS net_cost
@@ -789,6 +797,246 @@ def load_owner_map():
         return _read_owner_map(OWNER_MAP_FILE, os.path.getmtime(OWNER_MAP_FILE))
     except (OSError, ValueError, pd.errors.ParserError):
         return {}
+
+
+# ─── Unlabelled cost drill-down (Overview owner / feature donuts) ────────────
+UNLABELLED_FIELD = {"owner": "owner_name", "feature": "feature_name"}   # kind -> column that holds '(not labeled)'
+
+
+def _with_map_fallback(loader, *args):
+    """Call ``loader(*args, use_map)``; retry without the curated feature table when that table cannot be read (same as the donuts)."""
+    try:
+        return loader(*args, True)
+    except Exception:
+        return loader(*args, False)
+
+
+@st.cache_data(ttl=CACHE_TTL, show_spinner=False)
+def load_unlabelled_breakdown(kind, start_day, end_day, prev_start, services, projects, regions, skus, currency, resource_search,
+                              org=NO_ORG, exclude_projects=(), use_map=True):
+    """Unlabelled cost (kind = 'owner' | 'feature') for the selected and the previous period, by business unit, cluster, product, service, project, region.
+
+    The owner / feature rule, the filters and the USD maths are the ones the donuts use. Rows keep owner, feature and project id so the
+    donut's 'positive groups only' rule can be applied afterwards. ``exclude_projects`` = projects owner_map.csv already gives an owner."""
+    unlabelled_column = UNLABELLED_FIELD[kind]          # KeyError for anything but the two known kinds
+    cte, join, owner_sql, feature_sql = _owner_feature_sql(use_map)
+    condition = owner_sql if kind == "owner" else feature_sql
+    sql = f"""
+    {cte}
+    SELECT IF(usage_start_time >= TIMESTAMP(@start_day),'current','previous') AS period,
+      {owner_sql} AS owner_name,
+      {feature_sql} AS feature_name,
+      {bl.dim_sql(bl.BU)} AS business_unit,
+      {bl.dim_sql(bl.CLUSTER)} AS feature_cluster,
+      {bl.dim_sql(bl.APP)} AS application,
+      COALESCE(service.description,'Unspecified service') AS service,
+      IFNULL(project.id,'') AS project_id,
+      COALESCE(project.name,project.id,'Unspecified project') AS project_name,
+      COALESCE(NULLIF(location.region,''),'Unspecified region') AS region,
+      SUM({COST_USD}) AS gross_cost,
+      SUM({CREDITS_USD}) AS credits,
+      SUM({NET_USD}) AS net_cost,
+      COUNT(DISTINCT COALESCE(NULLIF(resource.global_name,''),NULLIF(resource.name,''))) AS resources
+    FROM `{TABLE_ID}` {join}
+    {filter_sql("prev_start")}
+      AND IFNULL(project.id,'') NOT IN UNNEST(@exclude_projects)
+      AND ({condition}) = @not_labeled
+    GROUP BY 1,2,3,4,5,6,7,8,9,10
+    """
+    params = leadership_params(start_day, end_day, prev_start, services, projects, regions, skus, currency, resource_search, org) + [
+        bigquery.ScalarQueryParameter("not_labeled", "STRING", NOT_LABELED),
+        bigquery.ArrayQueryParameter("exclude_projects", "STRING", list(exclude_projects))]
+    return run_query(sql, params, f"unlabelled_{unlabelled_column}")
+
+
+@st.cache_data(ttl=CACHE_TTL, show_spinner=False)
+def load_unlabelled_resources(kind, start_day, end_day, services, projects, regions, skus, currency, resource_search,
+                              org=NO_ORG, exclude_projects=(), use_map=True):
+    """Top 500 resources behind the unlabelled cost (selected dates only), with the labels they already carry."""
+    if kind not in UNLABELLED_FIELD:
+        raise KeyError(kind)
+    cte, join, owner_sql, feature_sql = _owner_feature_sql(use_map)
+    condition = owner_sql if kind == "owner" else feature_sql
+    sql = f"""
+    {cte}
+    SELECT IFNULL(project.id,'') AS project_id,
+      COALESCE(project.name,project.id,'Unspecified project') AS project_name,
+      COALESCE(NULLIF(resource.name,''),NULLIF(resource.global_name,''),'Resource not reported') AS resource,
+      COALESCE(service.description,'Unspecified service') AS service,
+      COALESCE(sku.description,'Unspecified SKU') AS sku,
+      COALESCE(NULLIF(location.region,''),'Unspecified region') AS region,
+      SUM({NET_USD}) AS net_cost,
+      ANY_VALUE(TO_JSON_STRING(labels)) AS resource_labels,
+      ANY_VALUE(TO_JSON_STRING(project.labels)) AS project_labels
+    FROM `{TABLE_ID}` {join}
+    {filter_sql()}
+      AND IFNULL(project.id,'') NOT IN UNNEST(@exclude_projects)
+      AND ({condition}) = @not_labeled
+    GROUP BY 1,2,3,4,5,6
+    ORDER BY net_cost DESC
+    LIMIT 500
+    """
+    params = query_params(start_day, end_day, services, projects, regions, skus, currency, resource_search, org) + [
+        bigquery.ScalarQueryParameter("not_labeled", "STRING", NOT_LABELED),
+        bigquery.ArrayQueryParameter("exclude_projects", "STRING", list(exclude_projects))]
+    return run_query(sql, params, f"unlabelled_resources_{kind}")
+
+
+UNLABELLED_RESOURCE_LIMIT = 5000   # the resource-level view keeps the biggest rows only: an account has millions of tiny resources
+
+
+@st.cache_data(ttl=CACHE_TTL, show_spinner=False)
+def load_unlabelled_top_resources(kind, start_day, end_day, prev_start, services, projects, regions, skus, currency, resource_search,
+                                  org=NO_ORG, exclude_projects=(), use_map=True):
+    """The biggest unlabelled resources (selected dates) with their business unit, cluster, product, service, project and region,
+    plus what each cost in the previous period. Capped at UNLABELLED_RESOURCE_LIMIT rows."""
+    if kind not in UNLABELLED_FIELD:
+        raise KeyError(kind)
+    cte, join, owner_sql, feature_sql = _owner_feature_sql(use_map)
+    condition = owner_sql if kind == "owner" else feature_sql
+    sql = f"""
+    {cte}
+    SELECT {bl.dim_sql(bl.BU)} AS business_unit,
+      {bl.dim_sql(bl.CLUSTER)} AS feature_cluster,
+      {bl.dim_sql(bl.APP)} AS application,
+      COALESCE(service.description,'Unspecified service') AS service,
+      COALESCE(project.name,project.id,'Unspecified project') AS project_name,
+      COALESCE(NULLIF(resource.name,''),NULLIF(resource.global_name,''),'Resource not reported') AS resource,
+      COALESCE(NULLIF(location.region,''),'Unspecified region') AS region,
+      SUM(IF(usage_start_time >= TIMESTAMP(@start_day), {NET_USD}, 0)) AS net_cost,
+      SUM(IF(usage_start_time < TIMESTAMP(@start_day), {NET_USD}, 0)) AS prev_cost
+    FROM `{TABLE_ID}` {join}
+    {filter_sql("prev_start")}
+      AND IFNULL(project.id,'') NOT IN UNNEST(@exclude_projects)
+      AND ({condition}) = @not_labeled
+    GROUP BY 1,2,3,4,5,6,7
+    HAVING net_cost > 0
+    ORDER BY net_cost DESC
+    LIMIT {UNLABELLED_RESOURCE_LIMIT}
+    """
+    params = leadership_params(start_day, end_day, prev_start, services, projects, regions, skus, currency, resource_search, org) + [
+        bigquery.ScalarQueryParameter("not_labeled", "STRING", NOT_LABELED),
+        bigquery.ArrayQueryParameter("exclude_projects", "STRING", list(exclude_projects))]
+    return run_query(sql, params, f"unlabelled_top_resources_{kind}")
+
+
+def build_unlabelled_resource_table(raw, donut_total):
+    """Resource-level grouped table (same columns as the grouped table, plus Resource after Project)."""
+    columns = ["Business unit", "Feature cluster", "Product", "Service", "Project", "Resource", "Region", "Net cost", "Previous period",
+               "Change", "Change %", "Share of total"]
+    if raw is None or raw.empty:
+        return pd.DataFrame(columns=columns)
+    out = raw.copy()
+    out["net_cost"] = pd.to_numeric(out["net_cost"], errors="coerce").fillna(0)
+    out["prev_cost"] = pd.to_numeric(out["prev_cost"], errors="coerce").fillna(0)
+    out["business_unit"] = out["business_unit"].map(bl.bu_name)
+    out["feature_cluster"] = out["feature_cluster"].map(lambda v: bl.display(bl.CLUSTER, v))
+    out["application"] = out["application"].map(lambda v: bl.display(bl.APP, v))
+    out["delta"] = out["net_cost"] - out["prev_cost"]
+    out["delta_pct"] = (out["delta"] / out["prev_cost"] * 100).where(out["prev_cost"] > 0)
+    out["share"] = out["net_cost"] / donut_total * 100 if donut_total > 0 else float("nan")
+    out = out[["business_unit", "feature_cluster", "application", "service", "project_name", "resource", "region", "net_cost", "prev_cost",
+               "delta", "delta_pct", "share"]]
+    out.columns = columns
+    return out.sort_values("Net cost", ascending=False).reset_index(drop=True)
+
+
+def build_unlabelled_table(raw, donut_total):
+    """(grouped table, number of projects) for the pop-up. Only (owner, feature, project) groups with positive net cost count, like the donut."""
+    columns = ["Business unit", "Feature cluster", "Product", "Service", "Project", "Region", "Net cost", "Previous period", "Change",
+               "Change %", "Share of total"]
+    empty = (pd.DataFrame(columns=columns), 0)
+    if raw is None or raw.empty:
+        return empty
+    raw = raw.copy()
+    for col in ("gross_cost", "credits", "net_cost", "resources"):
+        raw[col] = pd.to_numeric(raw[col], errors="coerce").fillna(0)
+    group = ["owner_name", "feature_name", "project_id"]
+    now = raw[raw["period"] == "current"]
+    now = now[now.groupby(group)["net_cost"].transform("sum") > 0]
+    if now.empty:
+        return empty
+    before = raw[raw["period"] == "previous"].merge(now[group].drop_duplicates(), on=group)
+    shown = ["business_unit", "feature_cluster", "application", "service", "project_name", "region"]
+    table = now.groupby(shown, as_index=False).agg(net=("net_cost", "sum"))
+    if before.empty:
+        table["prev"] = 0.0
+    else:
+        table = table.merge(before.groupby(shown, as_index=False).agg(prev=("net_cost", "sum")), on=shown, how="left")
+        table["prev"] = table["prev"].fillna(0.0)
+    table["delta"] = table["net"] - table["prev"]
+    table["delta_pct"] = (table["delta"] / table["prev"] * 100).where(table["prev"] > 0)
+    table["share"] = table["net"] / donut_total * 100 if donut_total > 0 else float("nan")
+    table["business_unit"] = table["business_unit"].map(bl.bu_name)
+    table["feature_cluster"] = table["feature_cluster"].map(lambda v: bl.display(bl.CLUSTER, v))
+    table["application"] = table["application"].map(lambda v: bl.display(bl.APP, v))
+    table = table.sort_values("net", ascending=False)[shown + ["net", "prev", "delta", "delta_pct", "share"]]
+    table.columns = columns
+    return table.reset_index(drop=True), int(now["project_id"].nunique())
+
+
+_OWNER_HINT_KEYS = [alias for column in ("dev_owner", "support_owner") for alias in LABEL_FIELDS[column][1]]
+
+
+def _label_dict(raw_json):
+    """{normalised key: value} from the JSON text of a labels array."""
+    try:
+        items = json.loads(raw_json) if raw_json else []
+    except ValueError:
+        return {}
+    return {"".join(ch for ch in str(i.get("key", "")).lower() if ch.isalnum()): str(i.get("value") or "")
+            for i in items or [] if isinstance(i, dict)}
+
+
+def _labels_text(raw_json):
+    """'key=value; key=value' text from the JSON text of a labels array."""
+    try:
+        items = json.loads(raw_json) if raw_json else []
+    except ValueError:
+        return ""
+    return "; ".join(f"{i.get('key')}={i.get('value')}" for i in items or [] if isinstance(i, dict))
+
+
+def build_unlabelled_resources(raw, owner_map):
+    """Resource-detail table: labels as text and a suggested owner (owner_map.csv, else a dev / support owner label)."""
+    columns = ["Project", "Resource", "Service", "SKU", "Region", "Net cost", "Resource labels", "Project labels", "Suggested owner"]
+    if raw is None or raw.empty:
+        return pd.DataFrame(columns=columns)
+
+    def suggest(row):
+        if owner_map.get(row["project_id"]):
+            return owner_map[row["project_id"]]
+        for text in (row["resource_labels"], row["project_labels"]):
+            found = _label_dict(text)
+            for alias in _OWNER_HINT_KEYS:
+                if found.get(alias):
+                    return found[alias]
+        return ""
+
+    out = pd.DataFrame({
+        "Project": raw["project_name"], "Resource": raw["resource"], "Service": raw["service"], "SKU": raw["sku"], "Region": raw["region"],
+        "Net cost": pd.to_numeric(raw["net_cost"], errors="coerce").fillna(0),
+        "Resource labels": raw["resource_labels"].map(_labels_text), "Project labels": raw["project_labels"].map(_labels_text),
+        "Suggested owner": raw.apply(suggest, axis=1)})
+    return out.reset_index(drop=True)
+
+
+def open_unlabelled(kind):
+    """Button callback: open the unlabelled-cost pop-up for 'owner' or 'feature' on the next run."""
+    st.session_state["unl_open"] = kind
+
+
+def unlabelled_click(kind, chart_key, labels):
+    """on_select callback for an Overview donut: clicking its '(not labeled)' slice opens the pop-up.
+
+    The chart key changes after every click, so the clicked slice never stays highlighted."""
+    def _cb():
+        state = st.session_state.get(chart_key)
+        value = bl.resolve_click(state["selection"]["points"] if state else [], [labels])
+        st.session_state["unl_n"] = st.session_state.get("unl_n", 0) + 1
+        if value == NOT_LABELED:
+            st.session_state["unl_open"] = kind
+    return _cb
 
 
 # ─── CPU & RAM: VM inventory, Cloud Monitoring metrics and billed VM cost ────
@@ -1124,6 +1372,83 @@ def render_bill_details(dim, value, billing, filters, fmt_money, start_day, end_
                        file_name=f"gcp_finops_leadership_{dim}_{str(value)[:30]}.csv",mime="text/csv",key=f"bill_dl_{dim}_{value}")
 
 
+def render_unlabelled_details(kind, table, projects_n, donut_unlabelled, fmt_money, start_day, end_day, signature, load_resources,
+                              load_by_resource):
+    """Body of the pop-up opened from the '(not labeled)' slice of the Overview owner / feature donut."""
+    noun = kind
+    if table.empty:
+        st.info(f"No cost without a {noun} label for these filters and dates.")
+        return
+    net_total, prev_total = float(table["Net cost"].sum()), float(table["Previous period"].sum())
+    st.caption(f"Cost with no {noun} label, grouped by business unit, feature cluster, product, service, project and region. "
+               "The previous period is shown for the rows that also have cost in the selected dates.")
+    m1, m2, m3 = st.columns(3)
+    m1.metric("Net cost", fmt_money(net_total))
+    if prev_total > 0:
+        m2.metric("Change vs previous period", fmt_money(net_total - prev_total),
+                  delta=f"{(net_total - prev_total) / prev_total:+.0%}", delta_color="inverse")
+    else:
+        m2.metric("Change vs previous period", "New")
+    m3.metric("Projects affected", f"{projects_n:,}")
+    st.markdown('<div style="height:6px"></div>', unsafe_allow_html=True)
+
+    tab_group, tab_res = st.tabs(["Grouped cost", "Resource detail"])
+    with tab_group:
+        by_resource = st.toggle("Group by resource name", key=f"unl_by_res_{kind}",
+                                help=f"Adds a Resource column and splits each row per resource. Shows the {UNLABELLED_RESOURCE_LIMIT:,} biggest "
+                                     "resources only, because there are millions of small ones. Runs one more BigQuery query.")
+        shown, coverage = table, ""
+        if by_resource:
+            try:
+                with loading_overlay("Loading resources", "Grouping the unlabelled cost by resource name."):
+                    shown = load_by_resource()
+                covered = float(shown["Net cost"].sum())
+                coverage = (f"Top {len(shown):,} resources = {fmt_money(covered)} of the {fmt_money(net_total)} unlabelled "
+                            f"({covered / net_total:.0%}). Smaller resources are not listed.").replace("$", "\\$") if net_total > 0 else ""
+            except Exception as exc:
+                st.error("Could not load the resource-level view.")
+                st.code(str(exc))
+        st.dataframe(shown, use_container_width=True, hide_index=True, column_config={
+            "Net cost": st.column_config.NumberColumn("Net cost", format="%.0f"),
+            "Previous period": st.column_config.NumberColumn("Previous period", format="%.0f"),
+            "Change": st.column_config.NumberColumn("Change", format="%+.0f"),
+            "Change %": st.column_config.NumberColumn("Change %", format="%+.0f%%"),
+            "Share of total": st.column_config.ProgressColumn("Share of total", format="%.1f%%", min_value=0, max_value=100)})
+        matches = abs(net_total - donut_unlabelled) < 1
+        if coverage:
+            st.caption(coverage)
+        st.caption((f"Total unlabelled: **{fmt_money(net_total)}** "
+                    + ("(matches the donut)." if matches else f"(the donut shows {fmt_money(donut_unlabelled)}: small differences come from rounding "
+                                                               "or from cost that changed since the donut was loaded).")).replace("$", "\\$"))
+        st.caption(f"{len(shown):,} rows. Share of total = share of all spend in the selected dates."
+                   + (" Previous period = what the same resource cost before." if by_resource else ""))
+        st.download_button("Download CSV", data=shown.round(2).to_csv(index=False).encode("utf-8-sig"),
+                           file_name=f"gcp_finops_unlabelled_{kind}{'_by_resource' if by_resource else ''}_{start_day}_{end_day}.csv",
+                           mime="text/csv", key=f"unl_dl_{kind}")
+    with tab_res:
+        st.caption("The 500 biggest resources behind this cost, with the labels they already carry. This runs one more BigQuery query.")
+        if st.button("Load resource detail", key=f"unl_res_btn_{kind}"):
+            try:
+                with loading_overlay("Loading resource detail", "Reading the biggest unlabelled resources from BigQuery."):
+                    st.session_state["unl_res"] = (signature, load_resources())
+            except Exception as exc:
+                st.error("Could not load the resource detail.")
+                st.code(str(exc))
+        stored = st.session_state.get("unl_res")
+        if stored and stored[0] == signature:
+            resources = stored[1]
+            if resources.empty:
+                st.info("No resources found for this selection.")
+            else:
+                st.caption(f"Top {len(resources):,} resources by net cost. Suggested owner comes from owner_map.csv, else from an app dev / "
+                           "support owner label.")
+                st.dataframe(resources, use_container_width=True, hide_index=True, column_config={
+                    "Net cost": st.column_config.NumberColumn("Net cost", format="%.0f")})
+                st.download_button("Download resource detail (CSV)", data=resources.round(2).to_csv(index=False).encode("utf-8-sig"),
+                                   file_name=f"gcp_finops_unlabelled_{kind}_resources_{start_day}_{end_day}.csv", mime="text/csv",
+                                   key=f"unl_res_dl_{kind}")
+
+
 # ─── UI building blocks ──────────────────────────────────────────────────────
 def style_chart(fig, height=360, legend=False):
     """Apply the unified SaaS chart design to any Plotly figure."""
@@ -1251,8 +1576,8 @@ def top_with_others(frame, label_col, value_col, top_n=6):
     return top
 
 
-def render_donut(series, center_value, center_label, height=250):
-    """Donut chart (left) with a percentage legend (right), as in modern SaaS dashboards."""
+def render_donut(series, center_value, center_label, height=250, chart_key=None, on_select=None):
+    """Donut chart (left) with a percentage legend (right), as in modern SaaS dashboards. ``on_select`` makes the slices clickable."""
     total = float(series.sum())
     colors = [OTHERS_COLOR if name == "Others" else (UNLABELED_COLOR if name == NOT_LABELED else DONUT_PALETTE[i % len(DONUT_PALETTE)]) for i, name in enumerate(series.index)]
     fig = go.Figure(go.Pie(
@@ -1272,7 +1597,11 @@ def render_donut(series, center_value, center_label, height=250):
     )
     chart_col, legend_col = st.columns([1.05, 1], vertical_alignment="center")
     with chart_col:
-        st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False})
+        if on_select is None:
+            st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False})
+        else:
+            st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False}, key=chart_key, on_select=on_select,
+                            selection_mode="points")
     with legend_col:
         st.markdown(f'<div class="dl-list">{legend}</div>', unsafe_allow_html=True)
 
@@ -1578,7 +1907,13 @@ if page == "Overview":
                 if ow.empty:
                     st.info("No positive net cost for these filters and dates.")
                 else:
-                    render_donut(ow, money(ow_total, cur_label), "Total Cost", height=290)
+                    owner_key = f"unl_chart_owner_{st.session_state.get('unl_n', 0)}"
+                    render_donut(ow, money(ow_total, cur_label), "Total Cost", height=290, chart_key=owner_key,
+                                 on_select=unlabelled_click("owner", owner_key, list(ow.index)))
+                    if ow_unlabeled > 0:
+                        st.button("View unlabelled owner cost", key="unl_btn_owner", icon=":material/table_view:", use_container_width=True,
+                                  on_click=open_unlabelled, args=("owner",),
+                                  help="Click the grey (not labeled) slice or this button to see where that cost sits and download it as CSV.")
         with card("project"):
             card_header("Cost by Project", "Top projects ranked by net cost", badge="Top 12")
             render_ranked_list(df, "project", "net_cost", cur_label, 12, "linear-gradient(90deg,#3B82F6,#60A5FA)")
@@ -1606,7 +1941,13 @@ if page == "Overview":
                 if fe.empty:
                     st.info("No positive net cost for these filters and dates.")
                 else:
-                    render_donut(fe, money(fe_total, cur_label), "Total Cost", height=290)
+                    feature_key = f"unl_chart_feature_{st.session_state.get('unl_n', 0)}"
+                    render_donut(fe, money(fe_total, cur_label), "Total Cost", height=290, chart_key=feature_key,
+                                 on_select=unlabelled_click("feature", feature_key, list(fe.index)))
+                    if fe_unlabeled > 0:
+                        st.button("View unlabelled feature cost", key="unl_btn_feature", icon=":material/table_view:", use_container_width=True,
+                                  on_click=open_unlabelled, args=("feature",),
+                                  help="Click the grey (not labeled) slice or this button to see where that cost sits and download it as CSV.")
         with card("donut_credits"):
             card_header("Credits by Service", "Largest credit / adjustment amounts by service")
             credit_df = df.assign(credit_abs=df["credits"].abs())
@@ -1616,6 +1957,43 @@ if page == "Overview":
             else:
                 cred = top_with_others(credit_df, "service", "credit_abs", 6)
                 render_donut(cred, money(abs(credits_total), cur_label), "Total Credits", height=230)
+
+    # Unlabelled-cost pop-up: opened by a click on a '(not labeled)' slice or the button under the donut. The query runs only now.
+    unl_kind = st.session_state.pop("unl_open", None)
+    if unl_kind in UNLABELLED_FIELD and label_df is not None:
+        unl_fmt = lambda v: money(v, cur_label)
+        unl_filters = (services, projects, regions, skus, currency, resource_search, org)
+        unl_exclude = tuple(sorted(owner_map)) if unl_kind == "owner" else ()   # projects owner_map.csv already gives an owner (same as the donut)
+        positive = label_df[label_df["net_cost"] > 0]
+        unl_total = float(positive["net_cost"].sum())
+        unl_donut = float(positive.loc[positive[UNLABELLED_FIELD[unl_kind]] == NOT_LABELED, "net_cost"].sum())
+        unl_error, unl_table, unl_projects = "", pd.DataFrame(), 0
+        try:
+            with loading_overlay("Loading unlabelled cost", "Grouping it by business unit, service, project and region."):
+                unl_raw = _with_map_fallback(load_unlabelled_breakdown, unl_kind, start_day, end_day, previous_period_start(start_day, end_day),
+                                             *unl_filters, unl_exclude)
+                unl_table, unl_projects = build_unlabelled_table(unl_raw, unl_total)
+        except Exception as exc:
+            unl_error = str(exc)
+        unl_sum = float(unl_table["Net cost"].sum()) if not unl_table.empty else 0.0
+        unl_title = (f"Unlabelled {unl_kind} cost · {unl_fmt(unl_sum)} ({unl_sum / unl_total:.0%} of total)"
+                     if unl_total > 0 and unl_sum > 0 else f"Unlabelled {unl_kind} cost")
+        unl_signature = (unl_kind, str(start_day), str(end_day), repr(unl_filters), unl_exclude)
+
+        @st.dialog(unl_title, width="large")
+        def show_unlabelled():
+            if unl_error:
+                st.error("Could not load the unlabelled cost.")
+                st.code(unl_error)
+                return
+            render_unlabelled_details(
+                unl_kind, unl_table, unl_projects, unl_donut, unl_fmt, start_day, end_day, unl_signature,
+                lambda: build_unlabelled_resources(
+                    _with_map_fallback(load_unlabelled_resources, unl_kind, start_day, end_day, *unl_filters, unl_exclude), owner_map),
+                lambda: build_unlabelled_resource_table(
+                    _with_map_fallback(load_unlabelled_top_resources, unl_kind, start_day, end_day, previous_period_start(start_day, end_day),
+                                       *unl_filters, unl_exclude), unl_total))
+        show_unlabelled()
 
 
 # ─── PAGE: Leadership (executive overview + VM efficiency) ──────────────────
