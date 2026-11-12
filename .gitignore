@@ -1,4 +1,10 @@
+<<<<<<< HEAD
 # Credentials - never commit
+=======
+# Credentials (service account keys) - never commit
+*.json
+!bu_mapping.json
+>>>>>>> pranay1
 service-account.json
 iksgcp.json
 *.key.json
