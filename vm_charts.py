@@ -23,13 +23,13 @@ from rightsizing import STATUS_ORDER
 # --------------------------------------------------------------------------- palette
 # Tokens match the app design system (app.py): Inter, ink #0F1B3D, muted #64748B, border #E6ECF5, primary #2563EB.
 FONT = "Inter, system-ui, -apple-system, Segoe UI, sans-serif"
-INK, TEXT, MUTED, GRID, CARD = "#0F1B3D", "#475569", "#64748B", "#EDF1F7", "#FFFFFF"
-CPU_COLOR, RAM_COLOR = "#2563EB", "#06B6D4"
-CURRENT_COLOR, RECOMMENDED_COLOR, USED_COLOR = "#94A3B8", "#10B981", "#F59E0B"
+INK, TEXT, MUTED, GRID, CARD = "#1A1813", "#3B3933", "#6B6961", "#E7E6E1", "#FFFFFF"
+CPU_COLOR, RAM_COLOR = "#1F76AD", "#008573"
+CURRENT_COLOR, RECOMMENDED_COLOR, USED_COLOR = "#9A988F", "#389560", "#D6A54D"
 
 STATUS_COLORS = {
-    "Idle": "#8B5CF6", "Over-provisioned": "#F59E0B", "Right-sized": "#10B981",
-    "Under-provisioned": "#EF4444", "Insufficient data": "#94A3B8", "Not evaluated": "#CBD5E1",
+    "Idle": "#8C60C8", "Over-provisioned": "#D6A54D", "Right-sized": "#389560",
+    "Under-provisioned": "#CC272E", "Insufficient data": "#9A988F", "Not evaluated": "#D9D7D0",
 }
 STATUS_TINT = {  # soft backgrounds for table cells
     "Idle": "#EDE9FE", "Over-provisioned": "#FEF3C7", "Right-sized": "#D1FAE5",
@@ -64,14 +64,14 @@ def finish(fig, title, subtitle="", height=380, legend=True):
         showlegend=legend,
         legend=dict(orientation="h", yanchor="bottom", y=1.0, xanchor="right", x=1.0, bgcolor="rgba(0,0,0,0)",
                     font=dict(size=12, color=TEXT)),
-        hoverlabel=dict(bgcolor="white", bordercolor="#E2E8F0", font=dict(family=FONT, size=13, color=INK)),
+        hoverlabel=dict(bgcolor="white", bordercolor="#DFDEDA", font=dict(family=FONT, size=13, color=INK)),
     )
     if subtitle:
         fig.add_annotation(name="subtitle", text=subtitle, xref="paper", yref="paper", x=0.0, y=1.0, yshift=32, xanchor="left",
                            yanchor="bottom", showarrow=False, font=dict(size=12.5, color=MUTED, family=FONT))
     fig.update_layout(meta=dict(title=title, subtitle=subtitle, top=top))   # lets detach_header() move the header out of the figure
-    fig.update_xaxes(showgrid=False, zeroline=False, showline=False, tickfont=dict(color=MUTED, size=11))
-    fig.update_yaxes(gridcolor=GRID, zeroline=False, showline=False, tickfont=dict(color=MUTED, size=11))
+    fig.update_xaxes(showgrid=False, zeroline=False, showline=False, tickfont=dict(color=MUTED, size=12))
+    fig.update_yaxes(gridcolor=GRID, griddash="dash", zeroline=False, showline=False, tickfont=dict(color=MUTED, size=12))
     return fig
 
 
@@ -118,22 +118,22 @@ def kpi_card(label, value, sub="", accent="#2563EB", tooltip=""):
 # Classes are prefixed "vkpi" so they never clash with the app's own .kpi-card / .kpi-label styles.
 KPI_CSS = """
 <style>
-.vkpi{background:#FFFFFF;border:1px solid #E6ECF5;border-radius:13px;padding:13px 14px 11px;min-height:92px;
-      box-shadow:0 1px 2px rgba(15,27,61,.04),0 8px 20px rgba(37,99,235,.05);overflow:hidden}
-.vkpi-label{display:flex;align-items:center;gap:7px;color:#475569;font-size:12px;font-weight:500;
+.vkpi{background:#FFFFFF;border:1px solid #E6E8E3;border-radius:13px;padding:13px 14px 11px;min-height:92px;
+      box-shadow:0 1px 2px rgba(26,36,33,.04),0 8px 20px rgba(0,133,115,.05);overflow:hidden}
+.vkpi-label{display:flex;align-items:center;gap:7px;color:#3D4744;font-size:12px;font-weight:500;
             white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .vkpi-label i{flex:0 0 8px;width:8px;height:8px;border-radius:50%;background:var(--accent);
               box-shadow:0 0 0 3px color-mix(in srgb,var(--accent) 18%,transparent)}
-.vkpi-value{color:#0F1B3D;font-size:19px;font-weight:700;line-height:1.2;margin-top:7px;letter-spacing:-.02em;
+.vkpi-value{color:#1A2421;font-size:19px;font-weight:700;line-height:1.2;margin-top:7px;letter-spacing:-.02em;
             font-variant-numeric:tabular-nums;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.vkpi-sub{color:#64748B;font-size:11.5px;font-weight:500;margin-top:3px;line-height:1.3}
-[data-testid="stPlotlyChart"]:not([class*="st-key-card_"] [data-testid="stPlotlyChart"]){background:#FFFFFF;border:1px solid #E6ECF5;border-radius:18px;padding:8px 10px;
-     box-shadow:0 1px 2px rgba(15,27,61,.04),0 10px 28px rgba(37,99,235,.05);margin-bottom:16px}
+.vkpi-sub{color:#6B7570;font-size:11.5px;font-weight:500;margin-top:3px;line-height:1.3}
+[data-testid="stPlotlyChart"]:not([class*="st-key-card_"] [data-testid="stPlotlyChart"]){background:#FFFFFF;border:1px solid #E6E8E3;border-radius:18px;padding:8px 10px;
+     box-shadow:0 1px 2px rgba(26,36,33,.04),0 10px 28px rgba(0,133,115,.05);margin-bottom:16px}
 .legend-row{display:flex;flex-wrap:wrap;gap:10px;margin:2px 0 12px}
 .pill{display:inline-flex;align-items:center;gap:6px;padding:4px 11px;border-radius:999px;font-size:12px;font-weight:600}
 .pill i{width:9px;height:9px;border-radius:50%;display:inline-block}
-.sec-title{font-size:15px;font-weight:600;color:#0F1B3D;margin:18px 0 4px;letter-spacing:-.005em}
-.sec-sub{color:#64748B;font-size:12.5px;margin:0 0 12px}
+.sec-title{font-size:15px;font-weight:600;color:#1A2421;margin:18px 0 4px;letter-spacing:-.005em}
+.sec-sub{color:#6B7570;font-size:12.5px;margin:0 0 12px}
 </style>
 """
 
@@ -173,7 +173,7 @@ def cpu_ram_map(df, target_cpu, target_mem, fmt_money, cpu_high=85, mem_high=90)
         ("RIGHT-SIZED", target_cpu + 1.5, 2.0, "#047857", "left", "bottom"),
         ("RUNNING HOT", 104, 2.0, "#B91C1C", "right", "bottom"),
     ):
-        fig.add_annotation(x=x, y=y, text=f"<b>{text}</b>", showarrow=False, xanchor=xa, yanchor=ya, font=dict(size=10.5, color=color))
+        fig.add_annotation(x=x, y=y, text=f"<b>{text}</b>", showarrow=False, xanchor=xa, yanchor=ya, font=dict(size=12, color=color))
     cols = ["instance_name", "owner", "client", "machine_type", "recommended_type"]
     for status in STATUS_ORDER:
         sub = d[d["status"] == status]
@@ -228,7 +228,7 @@ def top_savings_bar(df, fmt_money):
             x=sub["monthly_saving"], y=sub["instance_name"], orientation="h", name=status,
             marker=dict(color=STATUS_COLORS[status], line=dict(width=0)),
             text=[f"<b>{fmt_money(v)}</b>  {m}" for v, m in zip(sub["monthly_saving"], move)], textposition="outside",
-            cliponaxis=False, textfont=dict(size=11, color=TEXT),
+            cliponaxis=False, textfont=dict(size=12, color=TEXT),
             customdata=np.column_stack([move.values, sub["monthly_cost"].map(lambda v: fmt_money(v) if pd.notna(v) else "n/a").values,
                                         sub["owner"].astype(str).values]),
             hovertemplate=("<b>%{y}</b><br>%{customdata[0]}<br>Saving: <b>%{text}</b><br>Current monthly cost: %{customdata[1]}<br>"
@@ -339,7 +339,7 @@ def top_heat_bar(df, col, avg_col, title, subtitle, n=15):
     fig.add_trace(go.Bar(
         x=d[col], y=d["instance_name"], orientation="h", name="p95 of hourly peaks",
         marker=dict(color=d[col], colorscale=HEAT_SCALE, cmin=0, cmax=100, line=dict(width=0)),
-        text=d[col].map("{:.0f}%".format), textposition="outside", cliponaxis=False, textfont=dict(size=11, color=TEXT),
+        text=d[col].map("{:.0f}%".format), textposition="outside", cliponaxis=False, textfont=dict(size=12, color=TEXT),
         customdata=np.column_stack([d["machine_type"].astype(str).values, d[avg_col].fillna(np.nan).values]),
         hovertemplate="<b>%{y}</b><br>%{customdata[0]}<br>p95 peak: <b>%{x:.0f}%</b><br>Average: %{customdata[1]:.1f}%<extra></extra>"))
     fig.add_trace(go.Scatter(x=d[avg_col], y=d["instance_name"], mode="markers", name="Average",

@@ -61,12 +61,12 @@ PROD_VALUES = {"prod", "production", "prd", "live"}
 _KEY_OK = re.compile(r"^[A-Za-z0-9_.\-]+$")
 
 # colours: one validated categorical order; business units keep the plan's order so a unit is always the same colour
-BU_COLORS = ["#2563EB", "#8B5CF6", "#10B981", "#F59E0B", "#EC4899", "#06B6D4", "#6366F1", "#F97316"]
+BU_COLORS = ["#008573", "#D6A54D", "#1F76AD", "#D2603E", "#25A5C4", "#8C60C8", "#596475", "#419363"]   # reference palette, fixed order
 PIE_COLORS = BU_COLORS
-OTHER_COLOR, UNLABELED_COLOR, UNMAPPED_COLOR = "#CBD5E1", "#94A3B8", "#B8A88A"
-BASE_COLOR, UP_COLOR, DOWN_COLOR = "#2563EB", "#EF4444", "#10B981"
-GOOD_COLOR, WARN_COLOR, BAD_COLOR = "#10B981", "#F59E0B", "#EF4444"
-HEAT_SCALE = [[0.0, "#F4F8FF"], [0.25, "#DCE9FD"], [0.5, "#93C5FD"], [0.75, "#3B82F6"], [1.0, "#1D4ED8"]]   # one hue, light -> dark
+OTHER_COLOR, UNLABELED_COLOR, UNMAPPED_COLOR = "#D9D7D0", "#9A988F", "#B8A88A"
+BASE_COLOR, UP_COLOR, DOWN_COLOR = "#138282", "#CC272E", "#389560"
+GOOD_COLOR, WARN_COLOR, BAD_COLOR = "#389560", "#D6A54D", "#CC272E"
+HEAT_SCALE = [[0.0, "#F1F8F7"], [0.25, "#D3ECE9"], [0.5, "#8FCAC4"], [0.75, "#2F9A93"], [1.0, "#0E6B6B"]]   # one hue, light -> dark
 SPIKE_PCT, SPIKE_SHARE = 0.25, 0.02   # an "increase" insight needs +25% and at least 2% of total spend
 PIE_HEIGHT = 360
 
@@ -474,28 +474,28 @@ def insight_card(item):
 # --------------------------------------------------------------------------- HTML: header, sections, KPI strip
 LEAD_CSS = """
 <style>
-.lhead{display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:6px;padding:6px 2px 12px;border-bottom:1px solid #E6ECF5;margin:-6px 0 6px}
-.lhead b{font-size:16px;font-weight:700;letter-spacing:-.01em;color:#0F1B3D}
-.lhead span{color:#64748B;font-size:12.5px}
+.lhead{display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:6px;padding:6px 2px 12px;border-bottom:1px solid #E4E3DE;margin:-6px 0 6px}
+.lhead b{font-size:16px;font-weight:700;letter-spacing:-.01em;color:#1A1813}
+.lhead span{color:#6B6961;font-size:12.5px}
 .lsec{display:flex;align-items:baseline;gap:10px;flex-wrap:wrap;margin:24px 0 10px}
-.lsec b{font-size:16px;font-weight:700;color:#0F1B3D;letter-spacing:-.01em}
-.lsec span{color:#64748B;font-size:12.5px}
+.lsec b{font-size:16px;font-weight:700;color:#1A1813;letter-spacing:-.01em}
+.lsec span{color:#6B6961;font-size:12.5px}
 .kgrid{display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:12px;margin:6px 0 4px}
-.ktile{background:#FFFFFF;border:1px solid #E6ECF5;border-radius:14px;padding:14px 16px 12px;box-shadow:0 1px 2px rgba(15,27,61,.04),0 8px 20px rgba(37,99,235,.05);border-top:4px solid var(--accent)}
-.ktile-l{font-size:11px;font-weight:600;letter-spacing:.05em;text-transform:uppercase;color:#64748B}
-.ktile-v{font-size:20px;font-weight:700;color:#0F1B3D;line-height:1.2;margin-top:4px;letter-spacing:-.02em;font-variant-numeric:tabular-nums}
-.ktile-d{font-size:12.5px;margin-top:2px;color:#475569}
-.ktile-f{font-size:11.5px;color:#64748B;margin-top:8px;padding-top:7px;border-top:1px dashed #E6ECF5}
-.ins{background:#FFFFFF;border:1px solid #E6ECF5;border-left:5px solid var(--accent);border-radius:14px;padding:12px 14px 10px;
-     box-shadow:0 1px 2px rgba(15,27,61,.04),0 8px 20px rgba(37,99,235,.05);min-height:128px;margin-bottom:6px}
-.ins-tag{font-size:11px;font-weight:700;letter-spacing:.04em;text-transform:uppercase;color:var(--accent)}
-.ins-title{color:#0F1B3D;font-size:14.5px;font-weight:600;line-height:1.3;margin:4px 0}
-.ins-detail{color:#64748B;font-size:12.5px;line-height:1.4}
-.story{background:#FFFFFF;border:1px solid #E6ECF5;border-radius:16px;padding:14px 18px;color:#334155;font-size:13.5px;line-height:1.55;margin:4px 0 14px;
-       box-shadow:0 1px 2px rgba(15,27,61,.04),0 8px 20px rgba(37,99,235,.05)}
-.story b{color:#0F1B3D;font-weight:600}
+.ktile{background:#FFFFFF;border:1px solid #E4E3DE;border-radius:14px;padding:14px 16px 12px;box-shadow:0 1px 2px rgba(26,24,19,.04),0 8px 20px rgba(19,130,130,.05);border-top:4px solid var(--accent)}
+.ktile-l{font-size:12px;font-weight:600;letter-spacing:.05em;text-transform:uppercase;color:#6B6961}
+.ktile-v{font-size:20px;font-weight:700;color:#1A1813;line-height:1.2;margin-top:4px;letter-spacing:-.02em;font-variant-numeric:tabular-nums}
+.ktile-d{font-size:12.5px;margin-top:2px;color:#3B3933}
+.ktile-f{font-size:12px;color:#6B6961;margin-top:8px;padding-top:7px;border-top:1px dashed #E4E3DE}
+.ins{background:#FFFFFF;border:1px solid #E4E3DE;border-left:5px solid var(--accent);border-radius:14px;padding:12px 14px 10px;
+     box-shadow:0 1px 2px rgba(26,24,19,.04),0 8px 20px rgba(19,130,130,.05);min-height:128px;margin-bottom:6px}
+.ins-tag{font-size:12px;font-weight:700;letter-spacing:.04em;text-transform:uppercase;color:var(--accent)}
+.ins-title{color:#1A1813;font-size:14.5px;font-weight:600;line-height:1.3;margin:4px 0}
+.ins-detail{color:#6B6961;font-size:12.5px;line-height:1.4}
+.story{background:#FFFFFF;border:1px solid #E4E3DE;border-radius:16px;padding:14px 18px;color:#302E28;font-size:13.5px;line-height:1.55;margin:4px 0 14px;
+       box-shadow:0 1px 2px rgba(26,24,19,.04),0 8px 20px rgba(19,130,130,.05)}
+.story b{color:#1A1813;font-weight:600}
 .chips{display:flex;flex-wrap:wrap;gap:6px;margin:0 0 10px}
-.chip{display:inline-flex;align-items:center;gap:6px;padding:4px 11px;border-radius:999px;background:#FFFFFF;border:1px solid #E6ECF5;font-size:12px;color:#334155;font-weight:500}
+.chip{display:inline-flex;align-items:center;gap:6px;padding:4px 11px;border-radius:999px;background:#FFFFFF;border:1px solid #E4E3DE;font-size:12px;color:#302E28;font-weight:500}
 .chip i{width:9px;height:9px;border-radius:50%;display:inline-block}
 .up{color:#DC2626;font-weight:600}.down{color:#16A34A;font-weight:600}
 </style>
@@ -616,7 +616,7 @@ def _pie(slices, title, subtitle, fmt_money, clickable, height=PIE_HEIGHT):
         hovertemplate=("<b>%{customdata[0]}</b><br>Net cost: <b>%{customdata[1]}</b> · %{percent}<br>Previous period: %{customdata[2]}"
                        "<br>Change: %{customdata[3]}" + ("<br><i>Click for details</i>" if clickable else "") + "<extra></extra>"),
         domain=dict(x=[0.0, 0.52], y=[0.0, 1.0])))
-    fig.add_annotation(text=f"<b>{fmt_money(slices['cost'].sum())}</b><br><span style='font-size:11px;color:#64748B'>total spend</span>",
+    fig.add_annotation(text=f"<b>{fmt_money(slices['cost'].sum())}</b><br><span style='font-size:12px;color:#64748B'>total spend</span>",
                        x=0.26, y=0.5, xref="paper", yref="paper", showarrow=False, font=dict(size=14, color=INK, family=FONT))
     card_layout(fig, title, subtitle, height, legend=True)
     fig.update_layout(legend=dict(orientation="v", x=0.58, y=0.5, xanchor="left", yanchor="middle", font=dict(size=12, color=TEXT),
@@ -655,7 +655,7 @@ def spend_donut(rows, by, fmt_money, top=6, color_map=None, clickable=True, heig
                        font=dict(size=12, color="#64748B", family=FONT))
     fig.update_layout(height=height, margin=dict(l=0, r=0, t=0, b=0), paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
                       font=dict(family=FONT, color=TEXT, size=12), showlegend=False,
-                      hoverlabel=dict(bgcolor="white", bordercolor="#E2E8F0", font=dict(family=FONT, size=13, color=INK)))
+                      hoverlabel=dict(bgcolor="white", bordercolor="#DFDEDA", font=dict(family=FONT, size=13, color=INK)))
     legend = [(r["label"], r["color"], float(r["share"])) for _, r in slices.iterrows()]
     return fig, [slices["key"].tolist()], [k for k in slices["key"] if k is not None], legend
 
@@ -739,7 +739,7 @@ def bu_trend(daily, score, colors, start_day, end_day, fmt_money):
             line=dict(color=INK, width=2, dash="dot"), customdata=prev.map(fmt_money).values,
             hovertemplate="Previous period total: <b>%{customdata}</b><extra></extra>"))
     finish(fig, "Daily spend by business unit", "Stacked net cost per complete day · dotted line = previous period's daily total, shifted to line up.", 470)
-    fig.update_layout(hovermode="x unified", legend=dict(orientation="h", yanchor="top", y=-0.12, xanchor="left", x=0, font=dict(size=11)),
+    fig.update_layout(hovermode="x unified", legend=dict(orientation="h", yanchor="top", y=-0.12, xanchor="left", x=0, font=dict(size=12)),
                       margin=dict(b=70))
     fig.update_xaxes(tickformat="%d %b")
     fig.update_yaxes(tickformat=",.2s", rangemode="tozero")
@@ -772,7 +772,7 @@ def bridge(df, dim, fmt_money, n=8, title=None, subtitle=None, clickable=True):
     texts.append(f"<b>{fmt_money(cur_total)}</b>")
     fig = go.Figure(go.Waterfall(
         orientation="h", y=labels, x=values, measure=measures, text=texts, textposition="outside", cliponaxis=False,
-        textfont=dict(size=11, color=TEXT), connector=dict(line=dict(color="#CBD5E1", width=1)),
+        textfont=dict(size=12, color=TEXT), connector=dict(line=dict(color="#CBD5E1", width=1)),
         increasing=dict(marker=dict(color=UP_COLOR)), decreasing=dict(marker=dict(color=DOWN_COLOR)),
         totals=dict(marker=dict(color="#64748B")),
         hovertemplate="<b>%{y}</b><br>%{text}" + ("<br><i>Click for details</i>" if clickable else "") + "<extra></extra>"))
@@ -808,7 +808,7 @@ def bu_matrix(df, by, fmt_money, top_x=10):
     custom = np.dstack([np.vectorize(fmt_money)(p.values), (row_share.values * 100).round(0)])
     fig = go.Figure(go.Heatmap(
         z=p.where(p > 0).values, x=_short_unique([display(by, v) for v in order], 20), y=_short_unique([bu_name(v) for v in rows], 22),
-        colorscale=HEAT_SCALE, showscale=False, xgap=2, ygap=2, text=text, texttemplate="%{text}", textfont=dict(size=11), customdata=custom,
+        colorscale=HEAT_SCALE, showscale=False, xgap=2, ygap=2, text=text, texttemplate="%{text}", textfont=dict(size=12), customdata=custom,
         hovertemplate="<b>%{y}</b> · %{x}<br>Net cost: <b>%{customdata[0]}</b><br>%{customdata[1]:.0f}% of this unit's spend<extra></extra>"))
     fig.update_xaxes(side="top", tickangle=-30, showgrid=False)
     fig.update_yaxes(autorange="reversed", showgrid=False, automargin=True)
@@ -863,7 +863,7 @@ def coverage_bars(df):
         x=[p * 100 for _, p, _ in rows], y=[names.get(d, TITLES[d]) for d, _, _ in rows], orientation="h",
         marker=dict(color=[verdict(p)[1] for _, p, _ in rows], line=dict(width=0)),
         text=[f"<b>{p:.0%}</b> · {verdict(p)[0]}" for _, p, _ in rows], textposition="outside", cliponaxis=False,
-        textfont=dict(size=11, color=TEXT),
+        textfont=dict(size=12, color=TEXT),
         hovertemplate="<b>%{y}</b><br>%{x:.0f}% of spend<br><i>Click to see the spend missing it</i><extra></extra>"))
     fig.update_xaxes(range=[0, 135], showticklabels=False, showgrid=False)
     fig.update_yaxes(title="", automargin=True)
@@ -900,7 +900,7 @@ def tagging_trend(daily, end_day):
     for col, name, color in (("assigned", "Mapped to a business unit", GOOD_COLOR), ("unassigned", "Unmapped / no label", BAD_COLOR)):
         fig.add_trace(go.Bar(x=w["label"], y=w[col], name=name, marker=dict(color=color, line=dict(color="white", width=1)),
                              text=[f"{v:.0f}%" if v >= 8 else "" for v in w[col]], textposition="inside", insidetextanchor="middle",
-                             textfont=dict(color="white", size=11, family=FONT),
+                             textfont=dict(color="white", size=12, family=FONT),
                              hovertemplate="Week of %{x}<br>" + name + ": <b>%{y:.0f}%</b><extra></extra>"))
     fig.update_layout(barmode="stack", bargap=0.22)
     finish(fig, "Mapping trend", "Share of each week's spend that rolls up to a business unit.", 360)
@@ -912,14 +912,14 @@ def tagging_trend(daily, end_day):
 # --------------------------------------------------------------------------- executive overview (hero, KPI cards, card panels)
 EXEC_CSS = """
 <style>
-/* Leadership panels: same design tokens as the Overview page (Inter, #2563EB, #0F1B3D ink, #E6ECF5 borders, 18px cards).
+/* Leadership panels: same design tokens as the Overview page (Inter, #138282, #1A1813 ink, #E4E3DE borders, 18px cards).
    Selectors start with .stApp so Streamlit's own markdown styles (headings, paragraphs, tables) cannot override them. */
 
 /* ── Panels (HTML twins of the Plotly chart cards) ── */
-.stApp .xcard{background:#FFFFFF;border:1px solid #E6ECF5;border-radius:18px;padding:20px 22px 16px 22px;
-       box-shadow:0 1px 2px rgba(15,27,61,.04),0 10px 28px rgba(37,99,235,.05);
+.stApp .xcard{background:#FFFFFF;border:1px solid #E4E3DE;border-radius:12px;padding:16px 18px 14px 18px;
+       box-shadow:none;
        box-sizing:border-box;margin:0;min-width:0;display:flex;flex-direction:column}
-.stApp .xcard .card-head{margin-bottom:10px}
+.stApp .xcard > .card-head{margin:-16px -18px 10px -18px;padding:14px 18px 12px 18px;border-bottom:1px solid #EFEEEA}
 .stApp .xcard .xbody{flex:1 1 auto;min-width:0;overflow-x:auto;scrollbar-width:thin;scrollbar-color:#CBD5E1 transparent}
 /* Cards that sit side by side share one CSS grid: equal heights, no fixed pixel heights, no inner scrollbars, stacks on narrow screens */
 .stApp .xgrid{display:grid;gap:1rem;align-items:stretch;margin:0}
@@ -937,58 +937,58 @@ EXEC_CSS = """
 
 /* ── Spend by business unit bars ── */
 .stApp .xbar{display:grid;grid-template-columns:minmax(80px,1fr) 1.6fr auto;align-items:center;gap:12px;margin:0 0 10px;font-size:13px}
-.stApp .xbar b{color:#334155;font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.stApp .xbar .track{background:#EEF3FB;border-radius:999px;height:10px;overflow:hidden}
+.stApp .xbar b{color:#302E28;font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.stApp .xbar .track{background:#F1F0EB;border-radius:999px;height:10px;overflow:hidden}
 .stApp .xbar .fill{height:10px;border-radius:999px}
-.stApp .xbar .amt{font-weight:600;color:#0F1B3D;text-align:right;white-space:nowrap;font-variant-numeric:tabular-nums;line-height:1.25}
-.stApp .xbar .amt small{display:block;font-weight:600;font-size:11px}
+.stApp .xbar .amt{font-weight:600;color:#1A1813;text-align:right;white-space:nowrap;font-variant-numeric:tabular-nums;line-height:1.25}
+.stApp .xbar .amt small{display:block;font-weight:600;font-size:12px}
 
 /* ── Opportunities and actions ── */
-.stApp .xopp{display:flex;justify-content:space-between;align-items:center;gap:12px;padding:11px 0;border-bottom:1px solid #EDF1F7}
+.stApp .xopp{display:flex;justify-content:space-between;align-items:center;gap:12px;padding:11px 0;border-bottom:1px solid #EFEEEA}
 .stApp .xopp:last-child{border-bottom:none}
-.stApp .xopp b{display:block;font-size:13.5px;font-weight:600;color:#0F1B3D;line-height:1.3}
-.stApp .xopp span{font-size:12px;color:#64748B;line-height:1.4}
+.stApp .xopp b{display:block;font-size:13.5px;font-weight:600;color:#1A1813;line-height:1.3}
+.stApp .xopp span{font-size:12px;color:#6B6961;line-height:1.4}
 .stApp .xopp .save{font-weight:700;color:#16A34A;font-size:14px;white-space:nowrap;font-variant-numeric:tabular-nums}
-.stApp .xact{display:flex;gap:12px;padding:11px 0;border-bottom:1px solid #EDF1F7}
+.stApp .xact{display:flex;gap:12px;padding:11px 0;border-bottom:1px solid #EFEEEA}
 .stApp .xact:last-child{border-bottom:none}
-.stApp .xact .n{flex:none;width:24px;height:24px;border-radius:8px;background:#EAF1FE;color:#2563EB;font-weight:700;font-size:12px;
+.stApp .xact .n{flex:none;width:24px;height:24px;border-radius:8px;background:#DDEFEE;color:#138282;font-weight:700;font-size:12px;
          display:flex;align-items:center;justify-content:center}
-.stApp .xact b{display:block;font-size:13.5px;color:#0F1B3D;font-weight:600;line-height:1.3}
-.stApp .xact span{font-size:12px;color:#64748B;line-height:1.45}
-.stApp .xempty{color:#64748B;font-size:13px;padding:22px 0;text-align:center}
+.stApp .xact b{display:block;font-size:13.5px;color:#1A1813;font-weight:600;line-height:1.3}
+.stApp .xact span{font-size:12px;color:#6B6961;line-height:1.45}
+.stApp .xempty{color:#6B6961;font-size:13px;padding:22px 0;text-align:center}
 
 /* ── Tables (watchlist, product cost view) ── */
 .stApp .xtable{width:100%;border-collapse:collapse;font-size:13px;margin:0;border:none !important;display:table}
 /* Reset Streamlit's markdown table look (cell grid lines, zebra rows) so only the row dividers below remain */
 .stApp .xtable th,.stApp .xtable td{border:none !important}
 .stApp .xtable tr,.stApp .xtable tr:nth-child(even),.stApp .xtable tbody tr:nth-child(even){background:transparent !important;border:none !important}
-.stApp .xtable th{position:sticky;top:0;background:#FFFFFF;font-size:11px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;
-           color:#64748B;text-align:left;padding:7px 10px 7px 0;border-bottom:1px solid #E6ECF5 !important}
-.stApp .xtable td{padding:10px 10px 10px 0;border-bottom:1px solid #EDF1F7 !important;color:#0F1B3D;vertical-align:middle;background:transparent}
+.stApp .xtable th{position:sticky;top:0;background:#FFFFFF;font-size:12px;font-weight:500;letter-spacing:0;text-transform:none;
+           color:#6B6961;text-align:left;padding:7px 10px 7px 0;border-bottom:1px solid #E4E3DE !important}
+.stApp .xtable td{padding:10px 10px 10px 0;border-bottom:1px solid #EFEEEA !important;color:#1A1813;vertical-align:middle;background:transparent}
 .stApp .xtable tr:last-child td{border-bottom:none !important}
-.stApp .xtable tr:hover td{background:#F8FAFE}
-.stApp .xtable td small{display:block;color:#64748B;font-size:11.5px;line-height:1.35}
+.stApp .xtable tr:hover td{background:#F7F6F2}
+.stApp .xtable td small{display:block;color:#6B6961;font-size:12px;line-height:1.35}
 .stApp .xtable td.num{text-align:right;white-space:nowrap;font-variant-numeric:tabular-nums}
 .stApp .xtable th.num{text-align:right}
 .stApp .xtable th:last-child,.stApp .xtable td:last-child{padding-right:0}
-.stApp .badge{display:inline-block;padding:3px 10px;border-radius:999px;font-size:11px;font-weight:600;white-space:nowrap}
+.stApp .badge{display:inline-block;padding:3px 10px;border-radius:999px;font-size:12px;font-weight:600;white-space:nowrap}
 
 /* ── Native widgets used on this page ── */
 .stApp [data-testid="stPills"] button,.stApp [data-testid="stPills"] [data-baseweb="button-group"] button{
-    border-radius:999px !important;border:1px solid #E3E9F4 !important;background:#FFFFFF !important;color:#334155 !important;
-    font-size:12.5px !important;font-weight:600 !important;min-height:32px;padding:4px 14px !important;box-shadow:0 1px 2px rgba(15,27,61,.04)}
-.stApp [data-testid="stPills"] button:hover{background:#F5F8FE !important;border-color:#BFD3F8 !important;color:#1D4ED8 !important}
+    border-radius:999px !important;border:1px solid #DFDEDA !important;background:#FFFFFF !important;color:#302E28 !important;
+    font-size:12.5px !important;font-weight:600 !important;min-height:32px;padding:4px 14px !important;box-shadow:0 1px 2px rgba(26,24,19,.04)}
+.stApp [data-testid="stPills"] button:hover{background:#F3F2ED !important;border-color:#A8D3D1 !important;color:#0E6B6B !important}
 .stApp [data-testid="stPills"] button[aria-checked="true"],.stApp [data-testid="stPills"] button[aria-pressed="true"],
-.stApp [data-testid="stPills"] button[kind="pillsActive"]{background:#EAF1FE !important;border-color:#2563EB !important;color:#1D4ED8 !important}
+.stApp [data-testid="stPills"] button[kind="pillsActive"]{background:#DDEFEE !important;border-color:#138282 !important;color:#0E6B6B !important}
 .stApp [data-testid="stSelectbox"] label p,.stApp [data-testid="stRadio"] > label p,.stApp [data-testid="stPills"] label p{
-    font-size:11px !important;font-weight:600 !important;color:#64748B !important;text-transform:uppercase;letter-spacing:.06em}
-.stApp .block-container [data-testid="stRadio"] [role="radiogroup"] label p { font-size:13px; color:#334155 }
-.stApp [data-testid="stCaptionContainer"]{color:#64748B}
+    font-size:12px !important;font-weight:600 !important;color:#6B6961 !important;text-transform:uppercase;letter-spacing:.06em}
+.stApp .block-container [data-testid="stRadio"] [role="radiogroup"] label p { font-size:13px; color:#302E28 }
+.stApp [data-testid="stCaptionContainer"]{color:#6B6961}
 
 /* ── Details pop-up ── */
-div[data-testid="stDialog"] div[role="dialog"]{border-radius:20px;background:#F6F9FE;border:1px solid #E6ECF5;
-    box-shadow:0 24px 64px rgba(37,99,235,.18),0 2px 6px rgba(15,27,61,.05)}
-div[data-testid="stDialog"] div[role="dialog"] h2{font-size:20px;font-weight:700;color:#0F1B3D;letter-spacing:-.02em}
+div[data-testid="stDialog"] div[role="dialog"]{border-radius:20px;background:#FBFAF7;border:1px solid #E4E3DE;
+    box-shadow:0 24px 64px rgba(19,130,130,.18),0 2px 6px rgba(26,24,19,.05)}
+div[data-testid="stDialog"] div[role="dialog"] h2{font-size:20px;font-weight:700;color:#1A1813;letter-spacing:-.02em}
 </style>
 """
 CHART_CARD = 18   # border + padding the app CSS puts around a Plotly chart; HTML cards add it to line up with charts
@@ -1039,13 +1039,13 @@ def card_layout(fig, title, subtitle="", height=380, legend=False):
         height=height, margin=dict(l=16, r=16, t=top, b=16), paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
         font=dict(family=FONT, color=TEXT, size=12), showlegend=legend,
         legend=dict(orientation="h", x=1, xanchor="right", y=1.02, yanchor="bottom", bgcolor="rgba(0,0,0,0)", font=dict(size=12, color=TEXT)),
-        hoverlabel=dict(bgcolor="white", bordercolor="#E2E8F0", font=dict(family=FONT, size=13, color=INK)))
+        hoverlabel=dict(bgcolor="white", bordercolor="#DFDEDA", font=dict(family=FONT, size=13, color=INK)))
     if subtitle:
         fig.add_annotation(name="subtitle", text=html.escape(subtitle), xref="paper", yref="paper", x=0, y=1, yshift=top - 52, xanchor="left", yanchor="bottom",
                            showarrow=False, font=dict(size=12.5, color="#64748B", family=FONT))
     fig.update_layout(meta=dict(title=title, subtitle=subtitle, top=top))   # lets detach_header() move the header into the app's card
-    fig.update_xaxes(showgrid=False, zeroline=False, showline=False, tickfont=dict(color="#64748B", size=11))
-    fig.update_yaxes(gridcolor="#EDF1F7", zeroline=False, showline=False, tickfont=dict(color="#64748B", size=11))
+    fig.update_xaxes(showgrid=False, zeroline=False, showline=False, tickfont=dict(color="#64748B", size=12))
+    fig.update_yaxes(gridcolor="#E7E6E1", griddash="dash", zeroline=False, showline=False, tickfont=dict(color="#6B6961", size=12))
     return fig
 
 
@@ -1084,15 +1084,15 @@ def period_trend(daily, start_day, end_day, fmt_money, height=380):
     cur, prev = buckets(d[d["period"] == "current"], start), buckets(d[d["period"] == "previous"], prev_start)
     cur_dates = [(start + pd.Timedelta(days=i * step)).strftime("%d %b") for i in range(n)]
     prev_dates = [(prev_start + pd.Timedelta(days=i * step)).strftime("%d %b") for i in range(n)]
-    labels = [f"Week {i + 1}<br><span style='font-size:10px;color:#94A3B8'>{cur_dates[i]}</span>" for i in range(n)]
+    labels = [f"Week {i + 1}<br><span style='font-size:12px;color:#94A3B8'>{cur_dates[i]}</span>" for i in range(n)]
     weeks = [f"Week {i + 1}" for i in range(n)]
     texts, colors, changes = _change_labels(cur.values, prev.values, fmt_money)
     fig = go.Figure()
-    fig.add_trace(go.Bar(x=labels, y=prev.values, name="Previous period weeks", marker=dict(color="#A9C8F7", cornerradius=4),
+    fig.add_trace(go.Bar(x=labels, y=prev.values, name="Previous period weeks", marker=dict(color="#A8CBE0", cornerradius=4),
                          customdata=np.column_stack([weeks, prev_dates, prev.map(fmt_money).values]),
                          hovertemplate="<b>%{customdata[0]}</b> · previous period<br>Week from %{customdata[1]}<br><b>%{customdata[2]}</b><extra></extra>"))
     fig.add_trace(go.Bar(x=labels, y=cur.values, name="Current period weeks", marker=dict(color=BASE_COLOR, cornerradius=4),
-                         text=texts, textposition="outside", cliponaxis=False, textfont=dict(size=11, color=colors, family=FONT),
+                         text=texts, textposition="outside", cliponaxis=False, textfont=dict(size=12, color=colors, family=FONT),
                          customdata=np.column_stack([weeks, cur_dates, cur.map(fmt_money).values, changes]),
                          hovertemplate="<b>%{customdata[0]}</b> · current period<br>Week from %{customdata[1]}<br><b>%{customdata[2]}</b>"
                                        "<br>vs same week before: %{customdata[3]}<extra></extra>"))
@@ -1138,13 +1138,13 @@ def period_comparison(df, dim, start_day, end_day, fmt_money, n=10, title=None, 
         hover_change.append(arrow_text(r["delta"], r["delta_pct"], fmt_money) if r["prev"] > 0 else "new this period")
 
     fig = go.Figure()
-    fig.add_trace(go.Bar(y=names, x=t["prev"], orientation="h", name="Previous", marker=dict(color="#A9C8F7", cornerradius=4),
+    fig.add_trace(go.Bar(y=names, x=t["prev"], orientation="h", name="Previous", marker=dict(color="#A8CBE0", cornerradius=4),
                          text=[fmt_money(v) for v in t["prev"]], textposition="outside", cliponaxis=False,
-                         textfont=dict(size=10.5, color="#94A3B8", family=FONT),
+                         textfont=dict(size=12, color="#94A3B8", family=FONT),
                          customdata=[fmt_money(v) for v in t["prev"]],
                          hovertemplate=f"<b>%{{y}}</b><br>Previous ({prev_range}): %{{customdata}}<extra></extra>"))
     fig.add_trace(go.Bar(y=names, x=t["cost"], orientation="h", name="Current", marker=dict(color=BASE_COLOR, cornerradius=4),
-                         text=cur_text, textposition="outside", cliponaxis=False, textfont=dict(size=11, color=cur_color, family=FONT),
+                         text=cur_text, textposition="outside", cliponaxis=False, textfont=dict(size=12, color=cur_color, family=FONT),
                          customdata=np.column_stack([[fmt_money(v) for v in t["cost"]], hover_change]),
                          hovertemplate=f"<b>%{{y}}</b><br>Current ({cur_range}): %{{customdata[0]}}<br>Change: %{{customdata[1]}}<extra></extra>"))
     fig.update_layout(barmode="group", bargap=0.28, bargroupgap=0.06)

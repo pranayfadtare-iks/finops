@@ -19,7 +19,7 @@ EVALUATED = ["Idle", "Over-provisioned", "Right-sized", "Under-provisioned"]
 GROUP_FIELDS = ["client", "owner", "environment", "department", "application"]   # fields leaders can slice by
 COVERAGE_FIELDS = ["owner", "client", "environment", "department", "application", "dev_owner", "support_owner", "in_use_by"]
 SAVING_LOW, SAVING_HIGH = "#FDE68A", "#D97706"
-UNLABELED_COLOR = "#94A3B8"
+UNLABELED_COLOR = "#9A988F"
 
 
 # --------------------------------------------------------------------------- headline numbers
@@ -83,7 +83,7 @@ def savings_by_group(recs, dim, fmt_money, top=10):
     fig = go.Figure(go.Bar(
         x=g["saving"], y=g[dim], orientation="h", marker=dict(color=colors, line=dict(width=0)),
         text=[f"<b>{fmt_money(s)}</b> · {int(n)} VM{'s' if n != 1 else ''}" for s, n in zip(g["saving"], g["vms"])],
-        textposition="outside", cliponaxis=False, textfont=dict(size=11, color=TEXT),
+        textposition="outside", cliponaxis=False, textfont=dict(size=12, color=TEXT),
         customdata=g["cost"].map(lambda v: fmt_money(v)).values,
         hovertemplate="<b>%{y}</b><br>Est. monthly saving: <b>%{text}</b><br>Current compute cost: %{customdata}<br><i>Click for details</i><extra></extra>"))
     fig.update_xaxes(range=[0, top_saving * 1.75], showticklabels=False, showgrid=False)
@@ -104,7 +104,7 @@ def top_vm_savings(recs, fmt_money, n=10, clickable=True):
     fig = go.Figure(go.Bar(
         x=d["monthly_saving"], y=labels, orientation="h", marker=dict(color=[STATUS_COLORS[s] for s in d["status"]], line=dict(width=0)),
         text=[f"<b>{fmt_money(v)}</b>  {m}" for v, m in zip(d["monthly_saving"], move)], textposition="outside", cliponaxis=False,
-        textfont=dict(size=11, color=TEXT),
+        textfont=dict(size=12, color=TEXT),
         customdata=np.column_stack([d["status"].values, d["owner"].astype(str).values, d["client"].astype(str).values]),
         hovertemplate=("<b>%{y}</b> · %{customdata[0]}<br>Saving: <b>%{x:,.0f}</b><br>Owner: %{customdata[1]} · Client: %{customdata[2]}"
                        + ("<br><i>Click to open this VM</i>" if clickable else "") + "<extra></extra>")))
@@ -119,10 +119,10 @@ def label_coverage(recs):
     """Share of VMs that carry each label. Click a bar to list the VMs missing it."""
     rows = [(col, LABEL_FIELDS[col][0], float((recs[col] != NOT_LABELED).mean()), int((recs[col] == NOT_LABELED).sum())) for col in COVERAGE_FIELDS]
     rows.sort(key=lambda r: r[2])
-    colors = [("#10B981" if pct >= .9 else "#F59E0B" if pct >= .6 else "#EF4444") for _, _, pct, _ in rows]
+    colors = [("#389560" if pct >= .9 else "#D6A54D" if pct >= .6 else "#CC272E") for _, _, pct, _ in rows]
     fig = go.Figure(go.Bar(
         x=[r[2] * 100 for r in rows], y=[r[1] for r in rows], orientation="h", marker=dict(color=colors, line=dict(width=0)),
-        text=[f"<b>{r[2]:.0%}</b> · {r[3]} missing" for r in rows], textposition="outside", cliponaxis=False, textfont=dict(size=11, color=TEXT),
+        text=[f"<b>{r[2]:.0%}</b> · {r[3]} missing" for r in rows], textposition="outside", cliponaxis=False, textfont=dict(size=12, color=TEXT),
         hovertemplate="<b>%{y}</b><br>%{x:.0f}% of VMs labeled<br><i>Click to list VMs without it</i><extra></extra>"))
     fig.update_xaxes(range=[0, 135], showticklabels=False, showgrid=False)
     fig.update_yaxes(title="", automargin=True)

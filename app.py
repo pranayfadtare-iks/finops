@@ -57,36 +57,38 @@ else:
     _LOGO_SRC = ""
 
 # ─── Design tokens ───────────────────────────────────────────────────────────
-INK = "#0F1B3D"
-MUTED = "#64748B"
-PRIMARY = "#2563EB"
-BORDER = "#E6ECF5"
+INK = "#1A1813"
+MUTED = "#6B6961"
+PRIMARY = "#138282"
+BORDER = "#E4E3DE"
 # Donut / ranking palette (matches the reference SaaS theme)
-DONUT_PALETTE = ["#3B82F6", "#93C5FD", "#8B5CF6", "#34D399", "#FBBF24", "#F97316"]
-OTHERS_COLOR = "#CBD5E1"
-UNLABELED_COLOR = "#94A3B8"
-CHART_PALETTE = ["#2563EB", "#A9C8F7", "#8B5CF6", "#34D399", "#FBBF24", "#F97316"]
+DONUT_PALETTE = ["#008573", "#D6A54D", "#1F76AD", "#D2603E", "#25A5C4", "#8C60C8"]   # fixed order, CVD-checked
+OTHERS_COLOR = "#D9D7D0"
+UNLABELED_COLOR = "#9A988F"
+CHART_PALETTE = DONUT_PALETTE
+TEAL, BLUE, GOLD, CORAL = "#008573", "#1F76AD", "#D6A54D", "#D2603E"
+TEAL_SOFT, BLUE_SOFT, GOLD_SOFT, RED_SOFT, CYAN_SOFT = "#DDEFEE", "#E2EDF4", "#FAF0DC", "#FBE7E7", "#E0F1F5"
 # Uniform size of the two donut cards (Cost by Service / Credits by Service):
 # 1.0 = original, 0.8 = a little smaller, 0.7 = compact. Scales chart, text, legend and card padding together.
-DONUT_K = 0.8
+DONUT_K = 0.85
 
-# ─── Inline SVG icons for KPI cards ──────────────────────────────────────────
+# ─── Inline SVG icons for KPI cards (outline, coloured by role) ──────────────────────────────────────────
 def _icon(inner, color):
-    return (f'<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="{color}" stroke-width="2" '
+    return (f'<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="{color}" stroke-width="2" '
             f'stroke-linecap="round" stroke-linejoin="round">{inner}</svg>')
 
 
-SVG_NET_COST = _icon('<path d="M20 12V8H6a2 2 0 0 1 0-4h12v4"/><path d="M4 6v12a2 2 0 0 0 2 2h14v-4"/><path d="M18 12a2 2 0 0 0 0 4h4v-4Z"/>', "#2563EB")
-SVG_GROSS_COST = _icon('<polyline points="3 17 9 11 13 15 21 7"/><polyline points="15 7 21 7 21 13"/>', "#7C3AED")
-SVG_CREDITS = _icon('<rect x="3" y="8" width="18" height="13" rx="2"/><path d="M12 8v13"/><path d="M3 12h18"/><path d="M12 8c-2.5 0-4-1-4-2.5S9.5 3 11 3c1.5 0 1 2.5 1 5Zm0 0c2.5 0 4-1 4-2.5S14.5 3 13 3c-1.5 0-1 2.5-1 5Z"/>', "#16A34A")
-SVG_ROWS = _icon('<line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/>', "#3B82F6")
-SVG_SERVICES = _icon('<path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/><polyline points="3.27 6.96 12 12.01 20.73 6.96"/><line x1="12" y1="22.08" x2="12" y2="12"/>', "#F59E0B")
+SVG_NET_COST = _icon('<path d="M20 12V8H6a2 2 0 0 1 0-4h12v4"/><path d="M4 6v12a2 2 0 0 0 2 2h14v-4"/><path d="M18 12a2 2 0 0 0 0 4h4v-4Z"/>', TEAL)
+SVG_GROSS_COST = _icon('<polyline points="3 17 9 11 13 15 21 7"/><polyline points="15 7 21 7 21 13"/>', BLUE)
+SVG_CREDITS = _icon('<rect x="3" y="8" width="18" height="13" rx="2"/><path d="M12 8v13"/><path d="M3 12h18"/><path d="M12 8c-2.5 0-4-1-4-2.5S9.5 3 11 3c1.5 0 1 2.5 1 5Zm0 0c2.5 0 4-1 4-2.5S14.5 3 13 3c-1.5 0-1 2.5-1 5Z"/>', TEAL)
+SVG_ROWS = _icon('<line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/>', BLUE)
+SVG_SERVICES = _icon('<path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/><polyline points="3.27 6.96 12 12.01 20.73 6.96"/><line x1="12" y1="22.08" x2="12" y2="12"/>', "#B7791F")
 
 
-SVG_ALERT = _icon('<path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/>', "#EF4444")
-SVG_CHECK = _icon('<path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/>', "#16A34A")
-SVG_USERS = _icon('<path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/>', "#0891B2")
-SVG_SERVER = _icon('<rect x="2" y="3" width="20" height="8" rx="2"/><rect x="2" y="13" width="20" height="8" rx="2"/><line x1="6" y1="7" x2="6.01" y2="7"/><line x1="6" y1="17" x2="6.01" y2="17"/>', "#8B5CF6")
+SVG_ALERT = _icon('<path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/>', "#C2412D")
+SVG_CHECK = _icon('<path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/>', TEAL)
+SVG_USERS = _icon('<path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/>', "#1C8BA8")
+SVG_SERVER = _icon('<rect x="2" y="3" width="20" height="8" rx="2"/><rect x="2" y="13" width="20" height="8" rx="2"/><line x1="6" y1="7" x2="6.01" y2="7"/><line x1="6" y1="17" x2="6.01" y2="17"/>', BLUE)
 
 LEADERSHIP_PAGE = "Leadership Dashboard"   # used by the page checks below; must match the first NAV_ITEMS entry
 NAV_ITEMS = ["Leadership Dashboard", "Overview", "CPU & RAM", "Cost breakdowns", "Resource explorer", "Data & export"]
@@ -106,72 +108,105 @@ st.markdown("""
 .stApp, .stApp :not([data-testid="stIconMaterial"]):not(code):not(pre) {
     font-family: 'Inter', system-ui, -apple-system, 'Segoe UI', sans-serif;
 }
-.stApp {
-    background:
-        radial-gradient(1200px 500px at 85% -10%, rgba(59,130,246,.08), transparent 60%),
-        linear-gradient(180deg, #F6F9FE 0%, #EFF4FB 100%);
-    color: #0F1B3D;
-}
+.stApp {background: #FBFAF7; color: #1A1813;}
 .block-container {
-    padding: 1.6rem 2rem 2.5rem 2rem;
+    padding: 1.1rem 1.75rem 2rem 1.75rem;
     max-width: 1640px;
 }
-h1, h2, h3, h4 {color: #0F1B3D; letter-spacing: -0.01em;}
+[data-testid="stHeader"] {height: 2.25rem;}
+.stApp [data-testid="stVerticalBlock"] {gap: .85rem;}
+.stApp [data-testid="stHorizontalBlock"] {gap: .85rem;}
+.stApp [data-testid="stMarkdownContainer"]:has(> div.card-head),
+.stApp [data-testid="stMarkdownContainer"]:has(> div.status-row) {margin-bottom: 0 !important;}
+
+/* Thin, quiet scrollbars everywhere (sidebar, tables, panels) */
+* {scrollbar-width: thin; scrollbar-color: #D3D1CA transparent;}
+*::-webkit-scrollbar {width: 8px; height: 8px;}
+*::-webkit-scrollbar-thumb {background: #D3D1CA; border-radius: 8px; border: 2px solid transparent; background-clip: content-box;}
+*::-webkit-scrollbar-thumb:hover {background: #B9B7AF; background-clip: content-box;}
+*::-webkit-scrollbar-track {background: transparent;}
+
+/* Keyboard focus ring */
+.stApp button:focus-visible, .stApp [role="tab"]:focus-visible, .stApp a:focus-visible, .stApp label:has(input:focus-visible) {
+    outline: 2px solid #138282 !important; outline-offset: 2px;}
+h1, h2, h3, h4 {color: #1A1813; letter-spacing: -0.01em;}
 
 /* ── Sidebar (app navigation) ── */
 section[data-testid="stSidebar"] {
-    background: #FFFFFF;
-    border-right: 1px solid #E6ECF5;
+    background: #F5F3F0;
+    border-right: 1px solid #E4E3DE;
+    transition: width .22s ease, min-width .22s ease, max-width .22s ease, transform .22s ease !important;
 }
+section[data-testid="stSidebar"] > div {background: #F5F3F0;}
 section[data-testid="stSidebar"][aria-expanded="true"] {
     min-width: 252px !important;
     width: 252px !important;
     max-width: 252px !important;
 }
-[data-testid="stSidebarHeader"] {height: 1.2rem; padding: 0;}
-[data-testid="stSidebarUserContent"] {padding: 0 1rem 1rem 1rem;}
+[data-testid="stSidebarContent"] {display: flex; flex-direction: column; overflow-y: auto; overflow-x: hidden;}
+[data-testid="stSidebarHeader"] {height: 2.6rem; padding: 0 10px 0 0; align-items: center;}
+/* collapse button: always visible, round, quiet (reference "chevrons" toggle) */
+[data-testid="stSidebarCollapseButton"] {display: flex !important; visibility: visible !important; opacity: 1 !important;}
+[data-testid="stSidebarCollapseButton"] button, [data-testid="stSidebarCollapsedControl"] button {
+    width: 28px; height: 28px; min-height: 28px; padding: 0 !important; border-radius: 999px !important;
+    background: #FFFFFF !important; border: 1px solid #DFDEDA !important; color: #6B6961 !important;
+    box-shadow: 0 1px 2px rgba(26,24,19,.06); transition: color .15s ease, border-color .15s ease, background .15s ease;}
+[data-testid="stSidebarCollapseButton"] button:hover, [data-testid="stSidebarCollapsedControl"] button:hover {
+    color: #138282 !important; border-color: #A8D3D1 !important; background: #FFFFFF !important;}
+[data-testid="stSidebarCollapseButton"] button svg, [data-testid="stSidebarCollapsedControl"] button svg {width: 16px; height: 16px;}
+/* the content fills the sidebar so "Powered by" sits at the bottom without covering the menu */
+[data-testid="stSidebarUserContent"] {padding: 0 12px 14px 12px; flex: 1 0 auto; display: flex; flex-direction: column;}
+[data-testid="stSidebarUserContent"] > div,
+[data-testid="stSidebarUserContent"] > div > [data-testid="stVerticalBlockBorderWrapper"],
+[data-testid="stSidebarUserContent"] > div > [data-testid="stVerticalBlockBorderWrapper"] > div {flex: 1 0 auto; display: flex; flex-direction: column;}
+[data-testid="stSidebarUserContent"] > div > [data-testid="stVerticalBlockBorderWrapper"] > div > [data-testid="stVerticalBlock"] {flex: 1 0 auto; gap: 6px;}
+[data-testid="stSidebarUserContent"] [data-testid="stMarkdownContainer"] {margin-bottom: 0 !important;}
+/* the rail's expand toggle exists only while the sidebar is collapsed */
+body:has(section[data-testid="stSidebar"][aria-expanded="true"]) [data-testid="stSidebarCollapsedControl"] {display: none !important;}
+[data-testid="stSidebarUserContent"] [data-testid="stElementContainer"]:has(.side-powered) {margin-top: auto; padding-top: 16px;}
 .side-brand {
     display: flex;
     justify-content: center;   /* centers the logo horizontally */
-    padding: 6px 8px 22px 8px;
+    padding: 0 8px 14px 8px; margin-bottom: 6px; border-bottom: 1px solid #E4E3DE;
 }
-.side-brand-logo {height: 44px; overflow: hidden;}
+.side-brand-logo {height: 34px; overflow: hidden;}
 .side-brand-logo img {width: 96px; height: auto; display: block;}
-.side-brand-sep {width: 1px; height: 22px; background: #E2E8F0;}
-.side-brand-name {font-size: 15px; font-weight: 600; color: #0F1B3D; letter-spacing: -0.01em;}
+.side-brand-sep {width: 1px; height: 22px; background: #DFDEDA;}
+.side-brand-name {font-size: 15px; font-weight: 600; color: #1A1813; letter-spacing: -0.01em;}
 .side-section {
-    font-size: 11px; font-weight: 600; letter-spacing: .08em; text-transform: uppercase;
-    color: #94A3B8; padding: 0 12px 8px 12px;
+    font-size: 12px; font-weight: 600; letter-spacing: .06em; text-transform: uppercase;
+    color: #8C8A82; padding: 0 12px 8px 12px;
 }
 
 /* Radio group → nav list */
-section[data-testid="stSidebar"] div[role="radiogroup"] {gap: 4px; flex-direction: column;}
+section[data-testid="stSidebar"] div[role="radiogroup"] {gap: 2px; flex-direction: column;}
 section[data-testid="stSidebar"] div[role="radiogroup"] > label {
     display: flex; align-items: center; gap: 12px;
-    width: 100%; margin: 0; padding: 11px 14px;
-    border-radius: 12px; cursor: pointer;
+    width: 100%; margin: 0; padding: 9px 12px;
+    border-radius: 8px; cursor: pointer;
     transition: background .15s ease, color .15s ease;
 }
 section[data-testid="stSidebar"] div[role="radiogroup"] > label > div:first-of-type {display: none !important;}
 section[data-testid="stSidebar"] div[role="radiogroup"] > label p {
-    font-size: 14px; font-weight: 500; color: #475569; margin: 0;
+    font-size: 14px; font-weight: 500; color: #3B3933; margin: 0;
 }
 section[data-testid="stSidebar"] div[role="radiogroup"] > label::before {
     content: ""; width: 18px; height: 18px; flex: 0 0 18px;
-    background-color: #64748B;
+    background-color: #6B6961;
     -webkit-mask-repeat: no-repeat; mask-repeat: no-repeat;
     -webkit-mask-position: center; mask-position: center;
     -webkit-mask-size: contain; mask-size: contain;
 }
-section[data-testid="stSidebar"] div[role="radiogroup"] > label:hover {background: #F3F6FB;}
-section[data-testid="stSidebar"] div[role="radiogroup"] > label:has(input:checked) {background: #EAF1FE;}
-section[data-testid="stSidebar"] div[role="radiogroup"] > label:has(input:checked) p {color: #2563EB; font-weight: 600;}
-section[data-testid="stSidebar"] div[role="radiogroup"] > label:has(input:checked)::before {background-color: #2563EB;}
+section[data-testid="stSidebar"] div[role="radiogroup"] > label:hover {background: #ECEAE5;}
+section[data-testid="stSidebar"] div[role="radiogroup"] > label:hover p {color: #1A1813;}
+section[data-testid="stSidebar"] div[role="radiogroup"] > label:has(input:checked) {background: #D9ECEC;}
+section[data-testid="stSidebar"] div[role="radiogroup"] > label:has(input:checked) p {color: #155252; font-weight: 600;}
+section[data-testid="stSidebar"] div[role="radiogroup"] > label:has(input:checked)::before {background-color: #138282;}
 section[data-testid="stSidebar"] div[role="radiogroup"] > label:nth-of-type(2)::before {
     -webkit-mask-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><rect x='3' y='3' width='7' height='7' rx='1.5'/><rect x='14' y='3' width='7' height='7' rx='1.5'/><rect x='3' y='14' width='7' height='7' rx='1.5'/><rect x='14' y='14' width='7' height='7' rx='1.5'/></svg>");
     mask-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><rect x='3' y='3' width='7' height='7' rx='1.5'/><rect x='14' y='3' width='7' height='7' rx='1.5'/><rect x='3' y='14' width='7' height='7' rx='1.5'/><rect x='14' y='14' width='7' height='7' rx='1.5'/></svg>");
 }
-section[data-testid="stSidebar"] div[role="radiogroup"] > label:nth-of-type(3)::before {
+section[data-testid="stSidebar"] div[role="radiogroup"] > label:nth-of-type(5)::before {
     -webkit-mask-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><circle cx='11' cy='11' r='7'/><line x1='21' y1='21' x2='16.5' y2='16.5'/></svg>");
     mask-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><circle cx='11' cy='11' r='7'/><line x1='21' y1='21' x2='16.5' y2='16.5'/></svg>");
 }
@@ -179,7 +214,7 @@ section[data-testid="stSidebar"] div[role="radiogroup"] > label:nth-of-type(4)::
     -webkit-mask-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><path d='M21.21 15.89A10 10 0 1 1 8 2.83'/><path d='M22 12A10 10 0 0 0 12 2v10z'/></svg>");
     mask-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><path d='M21.21 15.89A10 10 0 1 1 8 2.83'/><path d='M22 12A10 10 0 0 0 12 2v10z'/></svg>");
 }
-section[data-testid="stSidebar"] div[role="radiogroup"] > label:nth-of-type(5)::before {
+section[data-testid="stSidebar"] div[role="radiogroup"] > label:nth-of-type(3)::before {
     -webkit-mask-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><rect x='5' y='5' width='14' height='14' rx='2'/><rect x='9' y='9' width='6' height='6'/><path d='M9 2v3M15 2v3M9 19v3M15 19v3M2 9h3M2 15h3M19 9h3M19 15h3'/></svg>");
     mask-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><rect x='5' y='5' width='14' height='14' rx='2'/><rect x='9' y='9' width='6' height='6'/><path d='M9 2v3M15 2v3M9 19v3M15 19v3M2 9h3M2 15h3M19 9h3M19 15h3'/></svg>");
 }
@@ -195,232 +230,349 @@ section[data-testid="stSidebar"] div[role="radiogroup"] > label:nth-of-type(1)::
 
 /* Powered-by card pinned to the bottom of the sidebar */
 .side-powered {
-    position: fixed; bottom: 18px; left: 16px; width: 220px;
-    padding: 14px 16px 36px 16px; border-radius: 16px; overflow: hidden;
-    background: linear-gradient(180deg, #F3F7FF 0%, #E6EEFD 100%);
-    border: 1px solid #E1EAFB;
+    position: static; width: auto;
+    padding: 12px 14px; border-radius: 10px; overflow: hidden;
+    background: #FFFFFF;
+    border: 1px solid #DFDEDA;
 }
 .side-powered .sp-row {display: flex; align-items: center; gap: 10px;}
-.side-powered .sp-small {font-size: 11px; color: #64748B; line-height: 1.2;}
-.side-powered .sp-big {font-size: 14px; font-weight: 600; color: #0F1B3D; line-height: 1.2;}
-.side-powered .sp-wave {position: absolute; left: 0; right: 0; bottom: 0; height: 34px;}
+.side-powered .sp-small {font-size: 12px; color: #6B6961; line-height: 1.2;}
+.side-powered .sp-big {font-size: 14px; font-weight: 600; color: #1A1813; line-height: 1.2;}
+.side-powered .sp-wave {display: none;}
+
+/* Collapsed sidebar = 72px icon rail (desktop); on phones Streamlit's slide-over menu is kept */
+@media (min-width: 769px) {
+  section[data-testid="stSidebar"][aria-expanded="false"] {transform: none !important; width: 72px !important; min-width: 72px !important; max-width: 72px !important;}
+  section[data-testid="stSidebar"][aria-expanded="false"] [data-testid="stSidebarContent"] {overflow: visible;}
+  section[data-testid="stSidebar"][aria-expanded="false"] [data-testid="stSidebarHeader"],
+  section[data-testid="stSidebar"][aria-expanded="false"] [data-testid="stSidebarCollapseButton"] {display: none !important;}
+  section[data-testid="stSidebar"][aria-expanded="false"] [data-testid="stSidebarUserContent"] {padding: 6px 12px 14px 12px;}
+  section[data-testid="stSidebar"][aria-expanded="false"] .side-brand,
+  section[data-testid="stSidebar"][aria-expanded="false"] .side-section,
+  section[data-testid="stSidebar"][aria-expanded="false"] .side-powered .sp-row > div {display: none;}
+  section[data-testid="stSidebar"][aria-expanded="false"] .side-powered {padding: 8px; display: flex; justify-content: center; background: transparent; border: none;}
+  section[data-testid="stSidebar"][aria-expanded="false"] .side-powered .sp-row svg {width: 28px; height: 28px;}
+  section[data-testid="stSidebar"][aria-expanded="false"] div[role="radiogroup"] > label {justify-content: center; padding: 10px 0; position: relative; overflow: visible;}
+  section[data-testid="stSidebar"][aria-expanded="false"] div[role="radiogroup"] > label p {display: none;}
+  section[data-testid="stSidebar"][aria-expanded="false"] div[role="radiogroup"] > label::after {
+    position: absolute; left: calc(100% + 14px); top: 50%; transform: translate(-4px, -50%); white-space: nowrap; pointer-events: none;
+    background: #1A1813; color: #FFFFFF; font-size: 12px; font-weight: 500; padding: 5px 9px; border-radius: 6px; z-index: 1000200;
+    opacity: 0; transition: opacity .15s ease, transform .15s ease; box-shadow: 0 6px 18px rgba(26,24,19,.18);}
+  section[data-testid="stSidebar"][aria-expanded="false"] div[role="radiogroup"] > label:hover::after {opacity: 1; transform: translate(0, -50%);}
+  section[data-testid="stSidebar"][aria-expanded="false"] div[role="radiogroup"] > label:nth-of-type(1)::after {content: "Leadership Dashboard";}
+  section[data-testid="stSidebar"][aria-expanded="false"] div[role="radiogroup"] > label:nth-of-type(2)::after {content: "Overview";}
+  section[data-testid="stSidebar"][aria-expanded="false"] div[role="radiogroup"] > label:nth-of-type(3)::after {content: "CPU & RAM";}
+  section[data-testid="stSidebar"][aria-expanded="false"] div[role="radiogroup"] > label:nth-of-type(4)::after {content: "Cost breakdowns";}
+  section[data-testid="stSidebar"][aria-expanded="false"] div[role="radiogroup"] > label:nth-of-type(5)::after {content: "Resource explorer";}
+  section[data-testid="stSidebar"][aria-expanded="false"] div[role="radiogroup"] > label:nth-of-type(6)::after {content: "Data & export";}
+  /* the expand toggle sits at the top of the rail */
+  [data-testid="stSidebarCollapsedControl"] {position: fixed; top: 14px; left: 22px; z-index: 1000100;}
+  [data-testid="stSidebarCollapsedControl"] [data-testid="stLogoSpacer"] {display: none;}
+  section[data-testid="stSidebar"][aria-expanded="false"] [data-testid="stSidebarUserContent"] {padding-top: 44px;}
+}
 
 /* ── Page header ── */
-.page-title {font-size: 26px; font-weight: 700; color: #0F1B3D; line-height: 1.15; letter-spacing: -0.02em;}
-.page-sub {font-size: 10.5px; color: #64748B; margin-top: 4px; font-weight: 500;}
+.page-title {font-size: 22px; font-weight: 700; color: #1A1813; line-height: 1.15; letter-spacing: -0.02em;}
+.page-sub {font-size: 13px; color: #6B6961; margin-top: 4px; font-weight: 400; line-height: 1.45;}
 .status-row {
     display: flex; justify-content: flex-end; align-items: center; gap: 12px;
-    margin: 2px 2px 14px 2px; font-size: 12px; color: #64748B;
+    margin: 0 2px 2px 2px; font-size: 12px; color: #6B6961;
 }
-.status-dot {width: 7px; height: 7px; border-radius: 50%; background: #22C55E; display: inline-block; margin-right: 6px;
-    box-shadow: 0 0 0 3px rgba(34,197,94,.15);}
+.status-dot {width: 7px; height: 7px; border-radius: 50%; background: #389560; display: inline-block; margin-right: 6px;
+    box-shadow: 0 0 0 3px rgba(56,149,96,.15);}
 .period-pill {
-    background: #EAF1FE; color: #1D4ED8; font-size: 12px; font-weight: 600;
+    background: #DDEFEE; color: #0E6B6B; font-size: 12px; font-weight: 600;
     padding: 5px 12px; border-radius: 999px;
 }
 
 /* ── Cards (bordered containers with key "card_*") ── */
 [data-testid="stVerticalBlockBorderWrapper"]:has(> div > [class*="st-key-card_"]) {
     background: #FFFFFF;
-    border: 1px solid #E6ECF5 !important;
-    border-radius: 18px !important;
-    box-shadow: 0 1px 2px rgba(15,27,61,.04), 0 10px 28px rgba(37,99,235,.05);
-    padding: 20px 22px 16px 22px !important;
+    border: 1px solid #E4E3DE !important;
+    border-radius: 12px !important;
+    box-shadow: none;
+    padding: 16px 18px 16px 18px !important;
+    transition: border-color .15s ease, box-shadow .15s ease;
 }
+[data-testid="stVerticalBlockBorderWrapper"]:has(> div > [class*="st-key-card_"]):hover {border-color: #D3D1CA !important; box-shadow: 0 4px 16px rgba(26,24,19,.05);}
 .card-head {display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; margin-bottom: 6px;}
-.card-title {font-size: 15px; font-weight: 600; color: #0F1B3D; letter-spacing: -0.005em;}
-.card-desc {font-size: 12.5px; color: #64748B; margin-top: 3px;}
+/* header row of a card gets the reference divider (only when it is the first thing in the card) */
+.stApp [class*="st-key-card_"] > [data-testid="stElementContainer"]:first-child .card-head {
+    margin: -16px -18px 2px -18px; padding: 14px 18px 12px 18px; border-bottom: 1px solid #EFEEEA;}
+/* cards in the same row end at the same height: each column stretches its last card */
+.stApp [data-testid="stHorizontalBlock"]:has(> [data-testid="stColumn"] [class*="st-key-card_"]) {align-items: stretch;}
+.stApp [data-testid="stColumn"]:has([class*="st-key-card_"]) {display: flex; flex-direction: column;}
+.stApp [data-testid="stColumn"]:has([class*="st-key-card_"]) > div,
+.stApp [data-testid="stColumn"]:has([class*="st-key-card_"]) > div > div {flex: 1 1 auto; display: flex; flex-direction: column;}
+.stApp [data-testid="stColumn"]:has([class*="st-key-card_"]) > div > div > [data-testid="stVerticalBlock"] {flex: 1 1 auto;}
+.stApp [data-testid="stColumn"] > div > div > [data-testid="stVerticalBlock"] > [data-testid="stVerticalBlockBorderWrapper"]:last-child:has(> div > [class*="st-key-card_"]) {flex: 1 1 auto;}
+.card-title {font-size: 15px; font-weight: 600; color: #1A1813; letter-spacing: -0.005em;}
+.card-desc {font-size: 13px; color: #6B6961; margin-top: 2px;}
 .card-badge {
-    font-size: 12px; font-weight: 500; color: #475569; background: #FFFFFF;
-    border: 1px solid #E3E9F4; border-radius: 10px; padding: 5px 10px; white-space: nowrap;
+    font-size: 12px; font-weight: 500; color: #3B3933; background: #FFFFFF;
+    border: 1px solid #DFDEDA; border-radius: 6px; padding: 3px 8px; white-space: nowrap;
 }
-.legend-inline {display: flex; gap: 14px; font-size: 12px; color: #64748B; align-items: center; white-space: nowrap;}
-.legend-inline i {display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 6px;}
+.legend-inline {display: flex; gap: 14px; font-size: 12.5px; color: #6B6961; align-items: center; white-space: nowrap;}
+.legend-inline i {display: inline-block; width: 10px; height: 10px; border-radius: 3px; margin-right: 6px; vertical-align: -1px;}
 
 /* ── KPI cards ── */
-/* Every size below is "base px × --k", so the whole card (text, icon, svg, padding, height)
-   scales uniformly. Change --k only: 1 = original size, 0.7 = compact, 0.6 = very compact. */
 .kpi-card {
-    --k: 0.7;
-    display: flex; flex-direction: column; gap: calc(10px * var(--k));
-    background: #FFFFFF; border: 1px solid #E6ECF5; border-radius: calc(18px * var(--k));
-    box-shadow: 0 1px 2px rgba(15,27,61,.04), 0 8px 20px rgba(37,99,235,.05);
-    padding: calc(18px * var(--k)) calc(18px * var(--k)) calc(14px * var(--k)) calc(18px * var(--k));
-    min-height: calc(132px * var(--k)); overflow: hidden;
+    display: flex; flex-direction: column; gap: 4px;
+    background: #FFFFFF; border: 1px solid #E4E3DE; border-radius: 12px;
+    box-shadow: 0 1px 2px rgba(26,24,19,.04);
+    padding: 14px 16px 14px 16px; min-height: 138px; overflow: hidden;
+    transition: border-color .15s ease, box-shadow .15s ease;
 }
-.kpi-top {display: flex; gap: calc(14px * var(--k)); align-items: center;}
-.kpi-foot {display: flex; align-items: flex-end; justify-content: space-between; gap: calc(8px * var(--k)); margin-top: auto;}
-.kpi-icon {
-    flex: 0 0 calc(44px * var(--k)); width: calc(44px * var(--k)); height: calc(44px * var(--k)); border-radius: calc(12px * var(--k));
-    display: flex; align-items: center; justify-content: center;
-}
-.kpi-icon svg {width: calc(20px * var(--k)); height: calc(20px * var(--k));}
-.kpi-body {min-width: 0; flex: 1;}
-.kpi-label {font-size: calc(12.5px * var(--k)); font-weight: 500; color: #475569; margin-bottom: calc(4px * var(--k)); white-space: nowrap; overflow: hidden; text-overflow: ellipsis;}
-.kpi-value {font-size: calc(24px * var(--k)); font-weight: 700; color: #0F1B3D; line-height: 1.15; letter-spacing: -0.02em; font-variant-numeric: tabular-nums; white-space: nowrap;}
-.kpi-sub {font-size: calc(12px * var(--k)); color: #64748B; font-weight: 500; min-width: 0; line-height: 1.3;
+.kpi-card:hover {border-color: #D3D1CA; box-shadow: 0 6px 18px rgba(26,24,19,.07);}
+.kpi-top {display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; margin-bottom: 8px;}
+.kpi-icon {flex: 0 0 34px; width: 34px; height: 34px; border-radius: 9px; display: flex; align-items: center; justify-content: center;}
+.kpi-icon svg {width: 18px; height: 18px;}
+.kpi-spark {flex: 0 1 96px; min-width: 0; max-width: 96px; height: 34px; display: block;}
+.kpi-label {font-size: 13px; font-weight: 500; color: #3B3933; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;}
+.kpi-valrow {display: flex; align-items: center; gap: 8px; flex-wrap: wrap; min-width: 0;}
+.kpi-value {font-size: clamp(18px, 1.7vw, 24px); font-weight: 700; color: #1A1813; line-height: 1.2; letter-spacing: -0.02em;
+    font-variant-numeric: tabular-nums; white-space: nowrap;}
+.kpi-delta {display: inline-flex; align-items: center; gap: 3px; font-size: 12px; font-weight: 600; line-height: 1;
+    padding: 4px 6px; border-radius: 6px; font-variant-numeric: tabular-nums;}
+.kpi-delta.good {color: #0B7A55; background: #E3F4EC;}
+.kpi-delta.bad {color: #B42318; background: #FDECEA;}
+.kpi-sub {font-size: 12px; color: #6B6961; font-weight: 400; line-height: 1.4; margin-top: 2px;
     display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;}
-.kpi-spark {flex: 0 0 auto; display: block; width: calc(84px * var(--k)); height: auto;}
+
+/* ── Executive summary (Leadership) ── */
+.xk-grid {display: grid; grid-template-columns: minmax(0, 1.4fr) repeat(4, minmax(0, 1fr)); gap: 12px; align-items: stretch;}
+.xk-hero {display: flex; flex-direction: column; gap: 4px; padding: 16px 18px 14px; border-radius: 14px; overflow: hidden;
+    background: linear-gradient(140deg, #0B4A42 0%, #0E5F54 55%, #0A3F38 100%); color: #FFFFFF; box-shadow: 0 8px 24px rgba(11,74,66,.22);}
+.xk-hero-top {display: flex; justify-content: space-between; align-items: baseline; gap: 10px; flex-wrap: wrap;}
+.xk-eyebrow {font-size: 13px; font-weight: 600; color: #BFE7DE;}
+.xk-period {font-size: 12px; color: #9CCFC4;}
+.xk-hero-row {display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-top: 4px;}
+.xk-hero-value {font-size: clamp(26px, 2.4vw, 34px); font-weight: 700; letter-spacing: -0.025em; line-height: 1.1; font-variant-numeric: tabular-nums;}
+.xk-chip {font-size: 12px; font-weight: 700; padding: 4px 8px; border-radius: 999px; line-height: 1; font-variant-numeric: tabular-nums;}
+.xk-chip.good {background: #D5F2E6; color: #0B6B4A;}
+.xk-chip.bad {background: #FCE3DF; color: #B42318;}
+.xk-hero-sub {font-size: 12.5px; color: #CDEBE4;}
+.xk-hero-spark {display: block; width: 100%; height: 56px; margin: 6px 0 4px;}
+.xk-hero-foot {display: flex; align-items: baseline; gap: 6px; font-size: 12px; color: #9CCFC4; border-top: 1px solid rgba(255,255,255,.14); padding-top: 8px;}
+.xk-hero-foot b {font-size: 14px; color: #FFFFFF; font-weight: 600; font-variant-numeric: tabular-nums;}
+.xk-tile {display: flex; flex-direction: column; gap: 6px; padding: 14px 14px; background: #FFFFFF; border: 1px solid #E4E3DE; border-radius: 14px;
+    box-shadow: 0 1px 2px rgba(26,24,19,.04); min-width: 0; transition: border-color .15s ease, box-shadow .15s ease, transform .15s ease;}
+.xk-tile:hover {border-color: #D3D1CA; box-shadow: 0 8px 20px rgba(26,24,19,.07); transform: translateY(-1px);}
+.xk-head {display: flex; align-items: flex-start; gap: 7px; margin-bottom: 2px; min-height: 33px;}
+.xk-ic svg {width: 16px; height: 16px; display: block; margin-top: 1px;}
+.xk-label {font-size: 12.5px; font-weight: 600; color: #3B3933; line-height: 1.3;}
+.xk-value {font-size: clamp(20px, 1.7vw, 25px); font-weight: 700; color: #1A1813; letter-spacing: -0.02em; line-height: 1.15; font-variant-numeric: tabular-nums; white-space: nowrap;}
+.xk-value.good {color: #0B6B4A;}
+.xk-unit {font-size: 12px; color: #6B6961; margin-top: 2px;}
+.xk-note {font-size: 12px; color: #6B6961; line-height: 1.4; margin-top: auto; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;}
+.xk-bar {height: 6px; background: #F1F0EB; border-radius: 3px; overflow: hidden; margin-top: 4px;}
+.xk-bar span {display: block; height: 100%; border-radius: 3px;}
+.xk-bar-text {font-size: 12px; color: #3B3933; font-weight: 500;}
+.xk-split {display: flex; align-items: stretch; gap: 14px;}
+.xk-split > div {min-width: 0;}
+.xk-split-sep {width: 1px; background: #E4E3DE; flex: none;}
+.xk-ringrow {display: flex; align-items: center; gap: 10px;}
+.xk-ring {width: 46px; height: 46px; flex: none;}
+@media (max-width: 1200px) {.xk-grid {grid-template-columns: repeat(2, minmax(0, 1fr));} .xk-hero {grid-column: 1 / -1;}}
+@media (max-width: 640px) {.xk-grid {grid-template-columns: minmax(0, 1fr);}}
 
 /* ── Ranked list rows (project / region / SKU) ── */
 .rank-list {display: flex; flex-direction: column; gap: 4px; margin-top: 10px;}
 .rank-row {
     display: grid; grid-template-columns: minmax(90px, 1.1fr) 1.7fr auto 52px; gap: 14px;
-    align-items: center; padding: 7px 0; font-size: 13px;
+    align-items: center; padding: 6px 0; font-size: 13px;
 }
-.rank-name {color: #334155; font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;}
-.rank-bar {height: 10px; background: #EEF3FB; border-radius: 999px; overflow: hidden;}
-.rank-bar span {display: block; height: 100%; border-radius: 999px;}
-.rank-val {color: #0F1B3D; font-weight: 600; text-align: right; font-variant-numeric: tabular-nums;}
-.rank-pct {color: #64748B; text-align: right; font-variant-numeric: tabular-nums;}
+.rank-name {color: #302E28; font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;}
+.rank-bar {height: 8px; background: #F1F0EB; border-radius: 4px; overflow: hidden;}
+.rank-bar span {display: block; height: 100%; border-radius: 4px;}
+.rank-val {color: #1A1813; font-weight: 600; text-align: right; font-variant-numeric: tabular-nums;}
+.rank-pct {color: #6B6961; text-align: right; font-variant-numeric: tabular-nums;}
 
 /* ── Donut legend ── */
 /* --dk (donut scale) is set per donut card below; 1 = original size */
 .dl-list {display: flex; flex-direction: column; gap: calc(11px * var(--dk, 1)); padding-top: calc(14px * var(--dk, 1));}
-.dl-row {display: flex; align-items: center; gap: calc(10px * var(--dk, 1)); font-size: calc(13px * var(--dk, 1));}
+.dl-row {display: flex; align-items: center; gap: calc(10px * var(--dk, 1)); font-size: max(12px, calc(13px * var(--dk, 1)));}
 .dl-dot {width: calc(10px * var(--dk, 1)); height: calc(10px * var(--dk, 1)); border-radius: 50%; flex: 0 0 calc(10px * var(--dk, 1));}
-.dl-name {flex: 1; color: #334155; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0;}
-.dl-pct {color: #0F1B3D; font-weight: 600; font-variant-numeric: tabular-nums;}
+.dl-name {flex: 1; color: #302E28; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0;}
+.dl-pct {color: #1A1813; font-weight: 600; font-variant-numeric: tabular-nums;}
 
 /* Donut cards ("Cost by Service", "Credits by Service"): everything inside scales uniformly by --dk (see DONUT_K in Python) */
 [data-testid="stVerticalBlockBorderWrapper"]:has(> div > [class*="st-key-card_donut_"]) {
     --dk: __DK__;
-    padding: calc(20px * var(--dk)) calc(22px * var(--dk)) calc(16px * var(--dk)) calc(22px * var(--dk)) !important;
-    border-radius: calc(18px * var(--dk)) !important;
+    padding: 16px 18px 16px 18px !important;
+    border-radius: 12px !important;
 }
 [class*="st-key-card_donut_"] {gap: calc(1rem * var(--dk)) !important;}
 [class*="st-key-card_donut_"] [data-testid="stHorizontalBlock"] {gap: calc(1rem * var(--dk)) !important;}
-[class*="st-key-card_donut_"] .card-head {gap: calc(12px * var(--dk)); margin-bottom: calc(6px * var(--dk));}
-[class*="st-key-card_donut_"] .card-title {font-size: calc(15px * var(--dk));}
-[class*="st-key-card_donut_"] .card-desc {font-size: calc(12.5px * var(--dk)); margin-top: calc(3px * var(--dk));}
+[class*="st-key-card_donut_"] .card-head {gap: 12px; margin-bottom: 2px;}
+[class*="st-key-card_donut_"] .card-title {font-size: 15px;}
+[class*="st-key-card_donut_"] .card-desc {font-size: 13px; margin-top: 2px;}
 [class*="st-key-card_donut_"] .card-badge {
-    font-size: calc(12px * var(--dk)); padding: calc(5px * var(--dk)) calc(10px * var(--dk)); border-radius: calc(10px * var(--dk));
+    font-size: max(12px, calc(12px * var(--dk))); padding: calc(5px * var(--dk)) calc(10px * var(--dk)); border-radius: calc(10px * var(--dk));
 }
 
 /* ── Inputs / selects / filters ── */
 div[data-baseweb="select"] > div, div[data-baseweb="input"], div[data-baseweb="base-input"] {
-    border-radius: 12px !important;
+    border-radius: 8px !important;
 }
 div[data-baseweb="select"] > div {
     min-height: 42px; background: #FFFFFF !important;
-    border: 1px solid #E3E9F4 !important;
-    box-shadow: 0 1px 2px rgba(15,27,61,.04);
+    border: 1px solid #DFDEDA !important;
+    box-shadow: 0 1px 2px rgba(26,24,19,.04);
     font-size: 13px;
 }
 div[data-baseweb="select"] > div:focus-within, div[data-baseweb="input"]:focus-within {
-    border-color: #2563EB !important; box-shadow: 0 0 0 3px rgba(37,99,235,.12) !important;
+    border-color: #138282 !important; box-shadow: 0 0 0 3px rgba(19,130,130,.12) !important;
 }
 div[data-baseweb="input"], div[data-baseweb="base-input"] {background: #FFFFFF !important;}
-div[data-baseweb="input"] {border: 1px solid #E3E9F4 !important;}
-.stMultiSelect [data-baseweb="tag"] {background: #EAF1FE !important; border-radius: 8px !important;}
-.stMultiSelect [data-baseweb="tag"] span {color: #1D4ED8 !important; font-weight: 500 !important;}
+div[data-baseweb="input"] {border: 1px solid #DFDEDA !important;}
+.stMultiSelect [data-baseweb="tag"] {background: #DDEFEE !important; border-radius: 8px !important;}
+.stMultiSelect [data-baseweb="tag"] span {color: #0E6B6B !important; font-weight: 500 !important;}
 .filter-label {
-    font-size: 11px; font-weight: 600; color: #64748B; text-transform: uppercase;
-    letter-spacing: .06em; margin-bottom: 4px;
+    font-size: 12px; font-weight: 600; color: #6B6961; text-transform: uppercase;
+    letter-spacing: .05em; margin-bottom: 4px;
 }
 
 /* ── Expander ── */
 [data-testid="stExpander"] {
-    background: #FFFFFF; border: 1px solid #E6ECF5 !important; border-radius: 14px;
-    box-shadow: 0 1px 2px rgba(15,27,61,.03); margin-top: 6px; margin-bottom: 14px;
+    background: #FFFFFF; border: 1px solid #E4E3DE !important; border-radius: 12px;
+    box-shadow: none; margin-top: 0; margin-bottom: 0; transition: border-color .15s ease;
 }
-[data-testid="stExpander"] summary {font-size: 13px; font-weight: 600; color: #334155;}
+[data-testid="stExpander"] summary {font-size: 14px; font-weight: 500; color: #302E28; padding: 10px 14px;}
+[data-testid="stExpander"]:hover {border-color: #D3D1CA !important;}
+[data-testid="stExpander"] summary:hover {color: #138282;}
 [data-testid="stExpander"] details {border: none !important;}
 
 /* ── Buttons ── */
 .stButton > button, .stDownloadButton > button {
-    border-radius: 12px !important; font-weight: 600 !important; font-size: 13px !important;
-    min-height: 42px; padding: 8px 18px !important; transition: all .15s ease !important;
+    border-radius: 8px !important; font-weight: 600 !important; font-size: 13px !important;
+    min-height: 40px; padding: 8px 14px !important; white-space: nowrap; transition: all .15s ease !important;
 }
 .stButton > button[kind="primary"] {
-    background: #2563EB !important; border: 1px solid #2563EB !important; color: #fff !important;
-    box-shadow: 0 6px 14px rgba(37,99,235,.25);
+    background: #138282 !important; border: 1px solid #138282 !important; color: #fff !important;
+    box-shadow: 0 1px 2px rgba(26,24,19,.08);
 }
-.stButton > button[kind="primary"]:hover {background: #1D4ED8 !important; border-color: #1D4ED8 !important;}
+.stButton > button[kind="primary"]:hover {background: #0E6B6B !important; border-color: #0E6B6B !important;}
 .stButton > button[kind="secondary"], .stDownloadButton > button {
-    background: #FFFFFF !important; border: 1px solid #E3E9F4 !important; color: #0F1B3D !important;
-    box-shadow: 0 1px 2px rgba(15,27,61,.04);
+    background: #FFFFFF !important; border: 1px solid #DFDEDA !important; color: #1A1813 !important;
+    box-shadow: 0 1px 2px rgba(26,24,19,.04);
 }
 .stButton > button[kind="secondary"]:hover, .stDownloadButton > button:hover {
-    background: #F5F8FE !important; border-color: #BFD3F8 !important; color: #1D4ED8 !important;
+    background: #F3F2ED !important; border-color: #A8D3D1 !important; color: #0E6B6B !important;
 }
 
 /* ── Dataframes / alerts ── */
-[data-testid="stDataFrame"] {border-radius: 14px; overflow: hidden; border: 1px solid #E6ECF5;}
-[data-testid="stAlert"] {border-radius: 14px;}
+[data-testid="stDataFrame"] {border-radius: 10px; overflow: hidden; border: 1px solid #E4E3DE;}
+[data-testid="stAlert"] {border-radius: 10px;}
+[data-testid="stAlert"] p {font-size: 13.5px;}
+
+/* ── Dialogs (pop-ups) ── */
+div[data-testid="stDialog"] div[role="dialog"] {border-radius: 14px !important; background: #FBFAF7 !important; border: 1px solid #DFDEDA;
+    box-shadow: 0 24px 60px rgba(26,24,19,.20), 0 2px 6px rgba(26,24,19,.06) !important;}
+div[data-testid="stDialog"] div[role="dialog"] > div:first-child {border-bottom: 1px solid #EFEEEA; padding-bottom: 12px; margin-bottom: 4px;}
+div[data-testid="stDialog"] div[role="dialog"] h2 {font-size: 18px; font-weight: 600; color: #1A1813; letter-spacing: -0.01em;}
+div[data-testid="stDialog"] div[role="dialog"] button[aria-label="Close"] {border-radius: 8px; transition: background .15s ease;}
+div[data-testid="stDialog"] div[role="dialog"] button[aria-label="Close"]:hover {background: #EEEDE8;}
+
+/* ── Drop-down menus (select / multiselect lists) and tooltips ── */
+div[data-baseweb="popover"] > div {border-radius: 10px !important; border: 1px solid #DFDEDA !important;
+    box-shadow: 0 12px 32px rgba(26,24,19,.12) !important; overflow: hidden;}
+div[data-baseweb="popover"] ul {padding: 4px !important;}
+div[data-baseweb="popover"] li[role="option"] {border-radius: 6px; font-size: 13.5px; transition: background .12s ease;}
+div[data-baseweb="popover"] li[role="option"]:hover {background: #F3F2ED !important;}
+div[data-baseweb="popover"] li[role="option"][aria-selected="true"] {background: #DDEFEE !important; color: #155252 !important;}
+div[data-baseweb="tooltip"] > div {border-radius: 6px !important; font-size: 12px !important;}
 
 /* ── st.metric → KPI-style card ── */
 /* Every size is "base px x --mk" so the whole card scales uniformly (1 = old size, 0.7 = compact, same as the KPI cards). */
 [data-testid="stMetric"] {
-    --mk: 0.7;
-    background: #FFFFFF; border: 1px solid #E6ECF5; border-radius: calc(18px * var(--mk));
-    box-shadow: 0 1px 2px rgba(15,27,61,.04), 0 8px 20px rgba(37,99,235,.05);
-    padding: calc(16px * var(--mk)) calc(18px * var(--mk));
+    --mk: 1;
+    background: #FFFFFF; border: 1px solid #E4E3DE; border-radius: 12px;
+    box-shadow: none;
+    padding: 14px 16px;
     gap: calc(4px * var(--mk));
 }
-[data-testid="stMetricLabel"] {color: #475569 !important; font-weight: 500 !important;}
-[data-testid="stMetricLabel"], [data-testid="stMetricLabel"] * {font-size: calc(12.5px * var(--mk)) !important; line-height: 1.3 !important;}
+[data-testid="stMetricLabel"] {color: #3B3933 !important; font-weight: 500 !important;}
+[data-testid="stMetricLabel"], [data-testid="stMetricLabel"] * {font-size: 13px !important; line-height: 1.3 !important;}
 [data-testid="stMetricLabel"] svg {width: calc(16px * var(--mk)) !important; height: calc(16px * var(--mk)) !important;}
 [data-testid="stMetricLabel"] *, [data-testid="stMetricDelta"] * {white-space: normal !important; overflow: visible !important; text-overflow: clip !important;}
 [data-testid="stMetricValue"] * {white-space: normal !important; overflow: visible !important; text-overflow: clip !important;}
-[data-testid="stMetricValue"], [data-testid="stMetricValue"] * {font-size: calc(22px * var(--mk)) !important; line-height: 1.2 !important;}
-[data-testid="stMetricValue"] {color: #0F1B3D !important; font-weight: 700 !important; letter-spacing: -0.02em;}
-[data-testid="stMetricDelta"], [data-testid="stMetricDelta"] * {font-size: calc(13px * var(--mk)) !important; line-height: 1.3 !important;}
+[data-testid="stMetricValue"], [data-testid="stMetricValue"] * {font-size: 22px !important; line-height: 1.2 !important;}
+[data-testid="stMetricValue"] {color: #1A1813 !important; font-weight: 700 !important; letter-spacing: -0.02em;}
+[data-testid="stMetricDelta"], [data-testid="stMetricDelta"] * {font-size: 12.5px !important; line-height: 1.3 !important;}
 [data-testid="stMetricDelta"] svg {width: calc(16px * var(--mk)) !important; height: calc(16px * var(--mk)) !important;}
 
 /* ── Pill tabs ── */
 div[data-testid="stTabs"] [role="tablist"] {
-    gap: 4px; background: #EAF0FA; border-radius: 14px; padding: 4px; display: inline-flex; border-bottom: none !important;
+    gap: 4px; border-bottom: 1px solid #E4E3DE !important; overflow-x: auto;
 }
 div[data-testid="stTabs"] [role="tab"] {
-    border-radius: 10px; padding: 8px 18px; height: auto; color: #64748B; font-weight: 500;
+    border-radius: 8px 8px 0 0; padding: 8px 14px; height: auto; color: #6B6961; font-weight: 500; position: relative;
+    transition: color .15s ease, background .15s ease;
 }
-div[data-testid="stTabs"] [role="tab"][aria-selected="true"] {
-    background: #FFFFFF; color: #2563EB; font-weight: 600; box-shadow: 0 1px 3px rgba(15,27,61,.1);
-}
+div[data-testid="stTabs"] [role="tab"] p {font-size: 14px;}
+div[data-testid="stTabs"] [role="tab"]:hover {color: #1A1813; background: #F3F2ED;}
+div[data-testid="stTabs"] [role="tab"][aria-selected="true"] {color: #138282; font-weight: 600; box-shadow: inset 0 -2px 0 #138282;}
+div[data-testid="stTabs"] [role="tab"][aria-selected="true"] p {font-weight: 600;}
+div[data-testid="stTabs"] [data-baseweb="tab-panel"] {padding-top: 14px;}
 div[data-testid="stTabs"] [data-baseweb="tab-highlight"], div[data-testid="stTabs"] [data-baseweb="tab-border"] {display: none;}
 
 /* ── Key / value items (VM ownership) ── */
 .kv-grid {display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 16px 20px; margin-top: 8px;}
-.kv-label {font-size: 11px; font-weight: 600; letter-spacing: .06em; text-transform: uppercase; color: #94A3B8;}
-.kv-value {font-size: 14px; font-weight: 600; color: #0F1B3D; margin-top: 3px; word-break: break-word;}
-.kv-value.muted-val {color: #94A3B8; font-weight: 500;}
+.kv-label {font-size: 12px; font-weight: 500; color: #6B6961;}
+.kv-value {font-size: 14px; font-weight: 500; color: #1A1813; margin-top: 3px; word-break: break-word;}
+.kv-value.muted-val {color: #8C8A82; font-weight: 500;}
 
 /* ── Full-screen loading overlay (centered) ── */
 .load-overlay {
     position: fixed; inset: 0; z-index: 999999; display: flex; align-items: center; justify-content: center;
-    background: rgba(240,245,253,.80); backdrop-filter: blur(5px); -webkit-backdrop-filter: blur(5px);
+    background: rgba(251,250,247,.80); backdrop-filter: blur(5px); -webkit-backdrop-filter: blur(5px);
     animation: load-fade .2s ease-out;
 }
 .load-card {
     display: flex; flex-direction: column; align-items: center; gap: 12px; text-align: center;
     min-width: 320px; max-width: 420px; padding: 28px 40px 26px 40px;
-    background: #FFFFFF; border: 1px solid #E6ECF5; border-radius: 22px;
-    box-shadow: 0 24px 64px rgba(37,99,235,.18), 0 2px 6px rgba(15,27,61,.05);
+    background: #FFFFFF; border: 1px solid #E4E3DE; border-radius: 22px;
+    box-shadow: 0 24px 64px rgba(19,130,130,.18), 0 2px 6px rgba(26,24,19,.05);
 }
 .load-logo {height: 26px; overflow: hidden;}
 .load-logo img {width: 68px; height: auto; display: block;}
 .load-ring {
     width: 46px; height: 46px; border-radius: 50%; margin-top: 4px;
-    border: 4px solid #E3ECFB; border-top-color: #2563EB; animation: load-spin .85s linear infinite;
+    border: 4px solid #D9ECEC; border-top-color: #138282; animation: load-spin .85s linear infinite;
 }
-.load-title {font-size: 15px; font-weight: 600; color: #0F1B3D; letter-spacing: -0.005em;}
-.load-sub {font-size: 12.5px; color: #64748B; line-height: 1.4;}
-.load-bar {position: relative; width: 190px; height: 4px; margin-top: 4px; background: #E6EEFB; border-radius: 999px; overflow: hidden;}
+.load-title {font-size: 15px; font-weight: 600; color: #1A1813; letter-spacing: -0.005em;}
+.load-sub {font-size: 12.5px; color: #6B6961; line-height: 1.4;}
+.load-bar {position: relative; width: 190px; height: 4px; margin-top: 4px; background: #D9ECEC; border-radius: 999px; overflow: hidden;}
 .load-bar::after {
     content: ""; position: absolute; top: 0; left: -40%; width: 40%; height: 100%; border-radius: 999px;
-    background: linear-gradient(90deg, #60A5FA, #2563EB); animation: load-slide 1.2s ease-in-out infinite;
+    background: linear-gradient(90deg, #3AA3A3, #138282); animation: load-slide 1.2s ease-in-out infinite;
 }
 @keyframes load-spin {to {transform: rotate(360deg);}}
 @keyframes load-slide {0% {left: -40%;} 100% {left: 100%;}}
 @keyframes load-fade {from {opacity: 0;} to {opacity: 1;}}
 
 /* ── Section heading inside pages ── */
-.view-label {font-size: 11px; font-weight: 600; color: #64748B; text-transform: uppercase; letter-spacing: .06em; padding-top: 2px;}
+.view-label {font-size: 12px; font-weight: 600; color: #6B6961; text-transform: uppercase; letter-spacing: .06em; padding-top: 2px;}
 
 /* ── Footer ── */
-.finops-footer {border-top: 1px solid #E2E8F0; padding-top: 16px; margin-top: 22px;}
-.finops-footer p {color: #94A3B8; font-size: 12px; margin: 0;}
+.finops-footer {border-top: 1px solid #DFDEDA; padding-top: 16px; margin-top: 22px;}
+.finops-footer p {color: #8C8A82; font-size: 12px; margin: 0;}
+.finops-footer code {font-size: 12px;}
+.stButton button p, .stDownloadButton button p {white-space: nowrap;}
+
+/* ── Responsive ── */
+@media (max-width: 1100px) {
+  .block-container {padding: 1rem 1.1rem 1.6rem 1.1rem;}
+  .stApp [data-testid="stHorizontalBlock"]:has(> [data-testid="stColumn"] [class*="st-key-card_"]) {flex-wrap: wrap;}
+  .stApp [data-testid="stHorizontalBlock"]:has(> [data-testid="stColumn"] [class*="st-key-card_"]) > [data-testid="stColumn"] {
+      flex: 1 1 100% !important; width: 100% !important; min-width: 100% !important;}
+}
+@media (max-width: 640px) {
+  .block-container {padding: .8rem .75rem 1.4rem .75rem;}
+  .page-title {font-size: 20px;}
+  .kv-grid {grid-template-columns: repeat(2, minmax(0, 1fr));}
+}
 </style>
 """.replace("__DK__", str(DONUT_K)), unsafe_allow_html=True)
 
@@ -1472,18 +1624,18 @@ def style_chart(fig, height=360, legend=False):
         margin=dict(l=8, r=8, t=(34 if legend else 8), b=8),
         paper_bgcolor="rgba(0,0,0,0)",
         plot_bgcolor="rgba(0,0,0,0)",
-        font=dict(family="Inter, system-ui, sans-serif", color="#475569", size=12),
+        font=dict(family="Inter, system-ui, sans-serif", color="#3B3933", size=12), colorway=CHART_PALETTE,
         showlegend=legend,
         legend=dict(orientation="h", yanchor="bottom", y=1.0, xanchor="left", x=0, title_text="",
-                    font=dict(size=12, color="#475569"), bgcolor="rgba(0,0,0,0)"),
+                    font=dict(size=12, color="#3B3933"), bgcolor="rgba(0,0,0,0)"),
         hoverlabel=dict(
-            bgcolor="white", bordercolor="#E2E8F0",
+            bgcolor="white", bordercolor="#DFDEDA",
             font=dict(family="Inter, system-ui, sans-serif", color=INK, size=13),
         ),
         title=dict(text=""),  # explicit empty string prevents "undefined"
     )
-    fig.update_xaxes(showgrid=False, zeroline=False, showline=False, tickfont=dict(color="#64748B", size=11))
-    fig.update_yaxes(gridcolor="#EDF1F7", zeroline=False, showline=False, tickfont=dict(color="#64748B", size=11))
+    fig.update_xaxes(showgrid=False, zeroline=False, showline=False, tickfont=dict(color=MUTED, size=12))
+    fig.update_yaxes(gridcolor="#E7E6E1", griddash="dash", zeroline=False, showline=False, tickfont=dict(color=MUTED, size=12))
     return fig
 
 
@@ -1544,7 +1696,7 @@ def chart_card(key, fig, chart_key, on_select=None, footer=None, badge=""):
             footer()
 
 
-def sparkline(values, color, name, bars=False, width=84, height=28):
+def sparkline(values, color, name, bars=False, width=96, height=34):
     vals = [float(v) for v in values if pd.notna(v)]
     if len(vals) < 2:
         return ""
@@ -1554,7 +1706,7 @@ def sparkline(values, color, name, bars=False, width=84, height=28):
         bw = width / len(vals)
         rects = "".join(
             f'<rect x="{i * bw + 0.8:.1f}" y="{height - max(v / hi * (height - 2), 2):.1f}" '
-            f'width="{max(bw - 1.8, 1):.1f}" height="{max(v / hi * (height - 2), 2):.1f}" rx="1.5" fill="{color}" opacity="{0.35 + 0.65 * (i + 1) / len(vals):.2f}"/>'
+            f'width="{max(bw - 1.8, 1):.1f}" height="{max(v / hi * (height - 2), 2):.1f}" rx="1.5" fill="{color}" opacity="{0.30 + 0.55 * (i + 1) / len(vals):.2f}"/>'
             for i, v in enumerate(vals)
         )
         return f'<svg class="kpi-spark" width="{width}" height="{height}" viewBox="0 0 {width} {height}">{rects}</svg>'
@@ -1566,18 +1718,95 @@ def sparkline(values, color, name, bars=False, width=84, height=28):
     area = f"0,{height} {line} {width},{height}"
     gid = f"sg_{name}"
     return (f'<svg class="kpi-spark" width="{width}" height="{height}" viewBox="0 0 {width} {height}">'
-            f'<defs><linearGradient id="{gid}" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="{color}" stop-opacity=".28"/>'
+            f'<defs><linearGradient id="{gid}" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="{color}" stop-opacity=".22"/>'
             f'<stop offset="1" stop-color="{color}" stop-opacity="0"/></linearGradient></defs>'
             f'<polygon points="{area}" fill="url(#{gid})"/>'
-            f'<polyline points="{line}" fill="none" stroke="{color}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>')
+            f'<polyline points="{line}" fill="none" stroke="{color}" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>')
 
 
-def render_kpi_card(label, value, sub, svg_icon, icon_bg, spark=""):
+def render_kpi_card(label, value, sub, svg_icon, icon_bg, spark="", delta=None):
+    """KPI card: tinted icon and sparkline on top, then label, value (+ optional change chip) and one context line.
+
+    ``delta`` is a fractional change vs the previous period; more spend is shown red, less spend green."""
+    chip = ""
+    if delta is not None and pd.notna(delta) and abs(delta) >= 0.0005:
+        up = delta > 0
+        arrow = ('<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" '
+                 f'stroke-linejoin="round"><polyline points="{"3 17 9 11 13 15 21 7" if up else "3 7 9 13 13 9 21 17"}"/>'
+                 f'<polyline points="{"15 7 21 7 21 13" if up else "15 17 21 17 21 11"}"/></svg>')
+        chip = f'<span class="kpi-delta {"bad" if up else "good"}" title="vs previous period">{arrow}{abs(delta):.1%}</span>'
     st.markdown(h(
-        f'<div class="kpi-card"><div class="kpi-top"><div class="kpi-icon" style="background:{icon_bg};">{svg_icon}</div>'
-        f'<div class="kpi-body"><div class="kpi-label">{html.escape(label)}</div><div class="kpi-value">{value}</div></div></div>'
-        f'<div class="kpi-foot"><div class="kpi-sub" title="{html.escape(sub, quote=True)}">{html.escape(sub)}</div>{spark}</div></div>'
+        f'<div class="kpi-card"><div class="kpi-top"><div class="kpi-icon" style="background:{icon_bg};">{svg_icon}</div>{spark}</div>'
+        f'<div class="kpi-label" title="{html.escape(label, quote=True)}">{html.escape(label)}</div>'
+        f'<div class="kpi-valrow"><div class="kpi-value">{value}</div>{chip}</div>'
+        f'<div class="kpi-sub" title="{html.escape(sub, quote=True)}">{html.escape(sub)}</div></div>'
     ), unsafe_allow_html=True)
+
+
+def _exec_spark(values, width=260, height=56):
+    """Wide area trend for the executive hero card (light line on the dark card)."""
+    vals = [float(v) for v in values if pd.notna(v)]
+    if len(vals) < 2:
+        return ""
+    lo, hi = min(vals), max(vals)
+    span = (hi - lo) or 1.0
+    step = width / (len(vals) - 1)
+    pts = " ".join(f"{i * step:.1f},{(height - 4) - (v - lo) / span * (height - 10):.1f}" for i, v in enumerate(vals))
+    return (f'<svg class="xk-hero-spark" viewBox="0 0 {width} {height}" preserveAspectRatio="none" aria-hidden="true">'
+            f'<defs><linearGradient id="xkg" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#7FD3C3" stop-opacity=".45"/>'
+            f'<stop offset="1" stop-color="#7FD3C3" stop-opacity="0"/></linearGradient></defs>'
+            f'<polygon points="0,{height} {pts} {width},{height}" fill="url(#xkg)"/>'
+            f'<polyline points="{pts}" fill="none" stroke="#9BE3D4" stroke-width="2" stroke-linejoin="round" vector-effect="non-scaling-stroke"/></svg>')
+
+
+def exec_hero_card(label, value, period, delta, delta_text, run_rate, series):
+    """Dark hero card: spend, change chip, daily trend of the period and the 30-day run rate."""
+    chip = ""
+    if delta is not None and pd.notna(delta) and abs(delta) >= 0.0005:
+        chip = f'<span class="xk-chip {"bad" if delta > 0 else "good"}">{"▲" if delta > 0 else "▼"} {abs(delta):.1%}</span>'
+    return (f'<div class="xk-hero"><div class="xk-hero-top"><span class="xk-eyebrow">{html.escape(label)}</span>'
+            f'<span class="xk-period">{html.escape(period)}</span></div>'
+            f'<div class="xk-hero-row"><div class="xk-hero-value">{html.escape(value)}</div>{chip}</div>'
+            f'<div class="xk-hero-sub">{html.escape(delta_text)}</div>'
+            f'{_exec_spark(series)}'
+            f'<div class="xk-hero-foot"><span>Run rate</span><b>{html.escape(run_rate)}</b><span>/ 30 days</span></div></div>')
+
+
+def _exec_head(label, svg):
+    return f'<div class="xk-head"><span class="xk-ic">{svg}</span><span class="xk-label">{html.escape(label)}</span></div>'
+
+
+def exec_split_tile(label, svg, parts, note):
+    """Tile with two figures side by side, e.g. resources | projects."""
+    body = '<span class="xk-split-sep"></span>'.join(
+        f'<div><div class="xk-value">{html.escape(v)}</div><div class="xk-unit">{html.escape(u)}</div></div>' for v, u in parts)
+    return (f'<div class="xk-tile">{_exec_head(label, svg)}<div class="xk-split">{body}</div>'
+            f'<div class="xk-note">{html.escape(note)}</div></div>')
+
+
+def exec_bar_tile(label, svg, value, sub, frac, color, bar_text, value_class=""):
+    """Tile with the value, a progress bar against its total, and one context line."""
+    bar = ""
+    if frac is not None and pd.notna(frac):
+        bar = (f'<div class="xk-bar"><span style="width:{max(min(frac, 1), 0) * 100:.1f}%;background:{color}"></span></div>'
+               f'<div class="xk-bar-text">{html.escape(bar_text)}</div>')
+    return (f'<div class="xk-tile">{_exec_head(label, svg)}<div class="xk-value {value_class}">{html.escape(value)}</div>'
+            f'{bar}<div class="xk-note">{html.escape(sub)}</div></div>')
+
+
+def exec_ring_tile(label, value, frac, sub, goal=0.9):
+    """Tile with a progress ring (share mapped) and the distance to the 90% goal."""
+    frac = max(min(float(frac or 0), 1), 0)
+    color = TEAL if frac >= goal else GOLD if frac >= 0.6 else CORAL
+    r = 26
+    c = 2 * 3.14159 * r
+    ring = (f'<svg class="xk-ring" viewBox="0 0 64 64" aria-hidden="true"><circle cx="32" cy="32" r="{r}" fill="none" stroke="#EEF1EC" stroke-width="7"/>'
+            f'<circle cx="32" cy="32" r="{r}" fill="none" stroke="{color}" stroke-width="7" stroke-linecap="round" '
+            f'stroke-dasharray="{c * frac:.1f} {c:.1f}" transform="rotate(-90 32 32)"/></svg>')
+    status = "On target" if frac >= goal else f"Goal {goal:.0%}"
+    return (f'<div class="xk-tile">{_exec_head(label, SVG_CHECK)}<div class="xk-ringrow">{ring}<div>'
+            f'<div class="xk-value">{html.escape(value)}</div><div class="xk-unit" style="color:{color};font-weight:600">{html.escape(status)}</div></div></div>'
+            f'<div class="xk-note">{html.escape(sub)}</div></div>')
 
 
 def top_with_others(frame, label_col, value_col, top_n=6):
@@ -1600,8 +1829,8 @@ def render_donut(series, center_value, center_label, height=250, chart_key=None,
         marker=dict(colors=colors, line=dict(color="#FFFFFF", width=3 * DONUT_K)),
         textinfo="none", hovertemplate="<b>%{label}</b><br>%{value:,.2f} · %{percent}<extra></extra>",
     ))
-    fig.add_annotation(text=f"<b>{center_value}</b>", x=0.5, y=0.54, showarrow=False, font=dict(size=round(19 * DONUT_K, 1), color=INK))
-    fig.add_annotation(text=center_label, x=0.5, y=0.43, showarrow=False, font=dict(size=round(12 * DONUT_K, 1), color=MUTED))
+    fig.add_annotation(text=f"<b>{center_value}</b>", x=0.5, y=0.54, showarrow=False, font=dict(size=17, color=INK))
+    fig.add_annotation(text=center_label, x=0.5, y=0.43, showarrow=False, font=dict(size=12, color=MUTED))
     style_chart(fig, round(height * DONUT_K))
     fig.update_layout(margin=dict(l=0, r=0, t=0, b=0))
     legend = "".join(
@@ -1677,7 +1906,7 @@ with fc1:
     period = st.selectbox(
         "Quick date range",
         list(PERIODS) + ["Custom"],
-        index=1,
+        index=0,
         label_visibility="collapsed",
         help="Select a preset date range or choose Custom to set exact dates.",
     )
@@ -1841,19 +2070,19 @@ if page != LEADERSHIP_PAGE:
     k1, k2, k3, k4, k5 = st.columns(5)
     with k1:
         render_kpi_card("Net Cost After Credits", money(net, cur_label), f"{net_share:.1f}% of gross cost",
-                        SVG_NET_COST, "#E8F0FE", sparkline(daily_all["net_cost"], "#2563EB", "net"))
+                        SVG_NET_COST, TEAL_SOFT, sparkline(daily_all["net_cost"], TEAL, "net"))
     with k2:
         render_kpi_card("Gross Cost", money(gross, cur_label), f"{period_label}",
-                        SVG_GROSS_COST, "#F1EAFE", sparkline(daily_all["gross_cost"], "#8B5CF6", "gross"))
+                        SVG_GROSS_COST, BLUE_SOFT, sparkline(daily_all["gross_cost"], BLUE, "gross"))
     with k3:
         render_kpi_card("Credits / Adjustments", money(credits_total, cur_label), f"{credit_share:.1f}% of gross cost",
-                        SVG_CREDITS, "#E3F8EC", sparkline(daily_all["credits"], "#22C55E", "credits"))
+                        SVG_CREDITS, TEAL_SOFT, sparkline(daily_all["credits"], TEAL, "credits"))
     with k4:
         render_kpi_card("Billing Rows", f"{row_count:,}", f"Avg {row_count / n_days:,.0f} rows / day",
-                        SVG_ROWS, "#E6F0FF", sparkline(daily_all["billing_rows"], "#3B82F6", "rows"))
+                        SVG_ROWS, BLUE_SOFT, sparkline(daily_all["billing_rows"], BLUE, "rows"))
     with k5:
         render_kpi_card("Services", f"{services_count:,}", f"across {projects_count:,} projects",
-                        SVG_SERVICES, "#FEF1DC", sparkline(daily_all["services"], "#F59E0B", "svc", bars=True))
+                        SVG_SERVICES, GOLD_SOFT, sparkline(daily_all["services"], GOLD, "svc", bars=True))
 
     st.markdown('<div style="height:14px"></div>', unsafe_allow_html=True)
 
@@ -1883,22 +2112,21 @@ if page == "Overview":
         with card("trend"):
             card_header(
                 "Daily Cost Trend",
-                right_html=('<div class="legend-inline"><span><i style="background:#A9C8F7"></i>Gross Cost</span>'
-                            '<span><i style="background:#2563EB"></i>Net Cost</span></div>'),
+                right_html=(f'<div class="legend-inline"><span><i style="background:{BLUE}"></i>Gross Cost</span>'
+                            f'<span><i style="background:{TEAL}"></i>Net Cost</span></div>'),
             )
             fig = go.Figure()
             fig.add_trace(go.Scatter(
                 x=daily_all["usage_date"], y=daily_all["gross_cost"], name="Gross cost", mode="lines",
-                line=dict(color="#A9C8F7", width=2, shape="spline", smoothing=0.6),
-                fill="tozeroy", fillcolor="rgba(169,200,247,.18)",
+                line=dict(color=BLUE, width=1.5, shape="spline", smoothing=1.0),
+                fill="tozeroy", fillcolor="rgba(40,122,163,.90)",
                 hovertemplate=f"Gross: {cur_symbol}%{{y:,.2f}}<extra></extra>",
             ))
             fig.add_trace(go.Scatter(
                 x=daily_all["usage_date"], y=daily_all["net_cost"], name="Net after credits",
-                mode="lines+markers" if len(daily_all) <= 45 else "lines",
-                line=dict(color="#2563EB", width=2.5, shape="spline", smoothing=0.6),
-                marker=dict(size=6, color="#FFFFFF", line=dict(color="#2563EB", width=2)),
-                fill="tozeroy", fillcolor="rgba(37,99,235,.10)",
+                mode="lines",
+                line=dict(color=TEAL, width=1.5, shape="spline", smoothing=1.0),
+                fill="tozeroy", fillcolor="rgba(19,130,130,.90)",
                 hovertemplate=f"Net: {cur_symbol}%{{y:,.2f}}<extra></extra>",
             ))
             style_chart(fig, 352)
@@ -1931,7 +2159,7 @@ if page == "Overview":
                                   help="Click the grey (not labeled) slice or this button to see where that cost sits and download it as CSV.")
         with card("project"):
             card_header("Cost by Project", "Top projects ranked by net cost", badge="Top 12")
-            render_ranked_list(df, "project", "net_cost", cur_label, 12, "linear-gradient(90deg,#3B82F6,#60A5FA)")
+            render_ranked_list(df, "project", "net_cost", cur_label, 12, TEAL)
 
     with right:
         with card("donut_service"):
@@ -2143,20 +2371,27 @@ elif page == LEADERSHIP_PAGE:
                 cover_value,cover_sub = f"{counts['mapped']/counts['resources']:.0%}",f"Resources mapped · {sm['assigned_pct']:.0%} of spend"
             else:
                 cover_value,cover_sub = f"{sm['assigned_pct']:.0%}","Spend with BU / product mapping"
-            k1,k2,k3,k4,k5 = st.columns(5)
-            with k1:
-                render_kpi_card("Total Cloud Spend",fmt_money(sm["cost"]),
-                                (f"{bl.arrow_text(sm['delta'],sm['delta_pct'],fmt_money)} vs previous" if has_prev else "Selected period · net of credits"),
-                                SVG_NET_COST,"#E8F0FE",sparkline(spend_series,"#2563EB","lead_cost"))
-            with k2:
-                render_kpi_card("Resources Inventoried",f"{counts['resources']:,}" if counts else "—",
-                                f"Across {counts['projects']} GCP projects" if counts else "Resource count unavailable",SVG_SERVER,"#F1EAFE")
-            with k3:
-                render_kpi_card("Underutilized Candidates",under_value,under_sub,SVG_SERVICES,"#FEF1DC")
-            with k4:
-                render_kpi_card("Potential Monthly Savings",save_value,save_sub,SVG_CREDITS,"#E3F8EC")
-            with k5:
-                render_kpi_card("Optimization Coverage",cover_value,cover_sub,SVG_CHECK,"#E6F0FF")
+            # Executive summary: one hero card for spend, four tiles that show each number against its total or goal
+            save_amount = float(down["monthly_saving"].sum(skipna=True)) if down is not None else (float(sched) if sched>0 else None)
+            cover_frac = counts["mapped"]/counts["resources"] if counts and counts["resources"] else sm["assigned_pct"]
+            run_rate = sm["run_rate"]
+            st.markdown(h('<div class="xk-grid">' + "".join([
+                exec_hero_card("Total cloud spend",fmt_money(sm["cost"]),f"{start_day:%d %b} – {end_day:%d %b %Y} · net of credits",
+                               (sm["delta_pct"] if has_prev else None),
+                               (f"{'−' if sm['delta']<0 else '+'}{fmt_money(abs(sm['delta']))} vs previous period" if has_prev else "No previous-period data"),
+                               fmt_money(run_rate),spend_series),
+                exec_split_tile("Resources inventoried",SVG_SERVER,
+                                [(f"{counts['resources']:,}" if counts else "—",f"across {counts['projects']:,} GCP projects" if counts else "")],
+                                "Billed resources · transient jobs and items under $0.01 left out" if counts else "Resource count unavailable"),
+                exec_bar_tile("Underutilized candidates",SVG_SERVICES,under_value,under_sub,
+                              (len(down)/len(recs) if down is not None and len(recs) else None),GOLD,
+                              (f"{len(down)/len(recs):.0%} of running VMs" if down is not None and len(recs) else "")),
+                exec_bar_tile("Potential monthly savings",SVG_CREDITS,save_value,save_sub,
+                              (min(save_amount/run_rate,1) if save_amount and run_rate>0 else None),TEAL,
+                              (f"{save_amount/run_rate:.1%} of monthly run rate · ≈ {fmt_money(save_amount*12)} a year" if save_amount and run_rate>0 else ""),
+                              value_class="good"),
+                exec_ring_tile("Optimization coverage",cover_value,cover_frac,cover_sub),
+            ]) + '</div>'),unsafe_allow_html=True)
             st.markdown('<div style="height:6px"></div>',unsafe_allow_html=True)
             if recs is None:
                 note,load_col = st.columns([4,1])
@@ -2236,19 +2471,19 @@ elif page == LEADERSHIP_PAGE:
                     st.markdown(bl.focus_story(r,rows,sm["bu_count"],fmt_money),unsafe_allow_html=True)
                     c1,c2,c3,c4 = st.columns(4)
                     with c1:
-                        render_kpi_card("Net Cost",fmt_money(r["cost"]),f"{r['share']:.0%} of total spend",SVG_NET_COST,"#E8F0FE")
+                        render_kpi_card("Net Cost",fmt_money(r["cost"]),f"{r['share']:.0%} of total spend",SVG_NET_COST,TEAL_SOFT)
                     with c2:
                         if r["prev"]>0:
                             moved = ("+" if r["delta"]>0 else "−" if r["delta"]<0 else "")+fmt_money(abs(r["delta"]))
                             render_kpi_card("Vs Previous Period",moved,f"{r['delta_pct']:+.0%} · was {fmt_money(r['prev'])}",
-                                            SVG_ALERT if r["delta"]>0 else SVG_CHECK,"#FEE2E2" if r["delta"]>0 else "#E3F8EC")
+                                            SVG_ALERT if r["delta"]>0 else SVG_CHECK,RED_SOFT if r["delta"]>0 else TEAL_SOFT)
                         else:
-                            render_kpi_card("Vs Previous Period","New","No spend in the previous period",SVG_GROSS_COST,"#F1EAFE")
+                            render_kpi_card("Vs Previous Period","New","No spend in the previous period",SVG_GROSS_COST,BLUE_SOFT)
                     with c3:
-                        render_kpi_card("Run Rate / 30 Days",fmt_money(r["run_rate"]),f"{fmt_money(r['run_rate']/30)} per day",SVG_GROSS_COST,"#F1EAFE")
+                        render_kpi_card("Run Rate / 30 Days",fmt_money(r["run_rate"]),f"{fmt_money(r['run_rate']/30)} per day",SVG_GROSS_COST,BLUE_SOFT)
                     with c4:
                         render_kpi_card("Non-Production",f"{r['nonprod_pct']:.0%}" if pd.notna(r["nonprod_pct"]) else "n/a",
-                                        f"{r['owner_pct']:.0%} of spend has an owner" if pd.notna(r["owner_pct"]) else "No owner data",SVG_SERVICES,"#FEF1DC")
+                                        f"{r['owner_pct']:.0%} of spend has an owner" if pd.notna(r["owner_pct"]) else "No owner data",SVG_SERVICES,GOLD_SOFT)
                     st.markdown('<div style="height:6px"></div>',unsafe_allow_html=True)
                     f1,f2 = st.columns(2)
                     with f1:
@@ -2383,7 +2618,7 @@ elif page == LEADERSHIP_PAGE:
                     ("Fleet right-sized",f"{sm['right_pct']:.0%}",f"{sm['right']} of {sm['evaluated']} evaluated VMs","#3B82F6","Share of evaluated VMs whose size fits."),
                     ("Owner label coverage",f"{sm['owner_pct']:.0%}",f"{sm['no_owner']} VMs have no owner","#06B6D4","VMs carrying an owner label."),
                 ]
-                icons = [(SVG_CREDITS,"#E3F8EC"),(SVG_SERVICES,"#FEF1DC"),(SVG_SERVER,"#F1EAFE"),(SVG_ALERT,"#FEE2E2"),(SVG_CHECK,"#E8F0FE"),(SVG_USERS,"#E0F5FA")]
+                icons = [(SVG_CREDITS,TEAL_SOFT),(SVG_SERVICES,GOLD_SOFT),(SVG_SERVER,BLUE_SOFT),(SVG_ALERT,RED_SOFT),(SVG_CHECK,TEAL_SOFT),(SVG_USERS,CYAN_SOFT)]
                 for holder,(label,value,sub,_accent,_tip),(svg,bg) in zip(st.columns(6),cards,icons):
                     with holder:
                         render_kpi_card(label,value,sub,svg,bg)
@@ -2508,11 +2743,11 @@ elif page == "Cost breakdowns":
     with b1:
         with card("region"):
             card_header("Region Cost Distribution", "Net cost broken down by cloud region", badge="Top 20")
-            render_ranked_list(df, "region", "net_cost", cur_label, 20, "linear-gradient(90deg,#14B8A6,#5EEAD4)")
+            render_ranked_list(df, "region", "net_cost", cur_label, 20, BLUE)
     with b2:
         with card("sku"):
             card_header("SKU / Billing Meter", "Top SKUs by net cost", badge="Top 20")
-            render_ranked_list(df, "sku", "net_cost", cur_label, 20, "linear-gradient(90deg,#8B5CF6,#C4B5FD)")
+            render_ranked_list(df, "sku", "net_cost", cur_label, 20, GOLD)
 
     st.markdown('<div style="height:6px"></div>', unsafe_allow_html=True)
     with card("matrix"):
@@ -2524,13 +2759,13 @@ elif page == "Cost breakdowns":
         if not heat.empty:
             pivot = heat.pivot(index="service", columns="project", values="net_cost").fillna(0)
             blue_scale = [
-                [0.0, "#F4F8FF"], [0.2, "#DCE9FD"], [0.4, "#B6D0FB"],
-                [0.6, "#7FAEF7"], [0.8, "#3B82F6"], [1.0, "#1D4ED8"],
+                [0.0, "#F1F8F6"], [0.2, "#D3ECE6"], [0.4, "#A3D6CB"],
+                [0.6, "#5DB5A5"], [0.8, "#14907E"], [1.0, "#006656"],
             ]
             fig = px.imshow(pivot, aspect="auto", color_continuous_scale=blue_scale,
                             labels=dict(x="Project", y="Service", color="Net cost"))
             style_chart(fig, 480)
-            fig.update_layout(coloraxis_colorbar=dict(thickness=10, len=0.8, outlinewidth=0, tickfont=dict(size=11, color=MUTED)))
+            fig.update_layout(coloraxis_colorbar=dict(thickness=10, len=0.8, outlinewidth=0, tickfont=dict(size=12, color=MUTED)))
             st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False})
         else:
             st.info("Not enough data to build the service × project matrix for the current filters.")
@@ -2538,9 +2773,9 @@ elif page == "Cost breakdowns":
 
 # ─── PAGE: CPU & RAM (VM utilization, right-sizing, owner/client labels) ─────
 elif page == "CPU & RAM":
-    STATUS_COLORS = {"Idle": "#94A3B8", "Over-provisioned": "#F59E0B", "Right-sized": "#10B981", "Under-provisioned": "#EF4444",
-                     "Insufficient data": "#CBD5E1", "Not evaluated": "#E2E8F0"}
-    C_NOW, C_REC, C_WARN, C_PURPLE = "#3B82F6", "#34D399", "#F59E0B", "#8B5CF6"
+    STATUS_COLORS = {"Idle": "#8C60C8", "Over-provisioned": "#D6A54D", "Right-sized": "#389560", "Under-provisioned": "#CC272E",
+                     "Insufficient data": "#9A988F", "Not evaluated": "#D9D7D0"}
+    C_NOW, C_REC, C_WARN, C_PURPLE = "#1F76AD", "#389560", "#D6A54D", "#8C60C8"
 
     def show_chart(fig, height, legend=False, subplots=False):
         style_chart(fig, height, legend=legend)
@@ -2676,8 +2911,8 @@ elif page == "CPU & RAM":
                                              hover_data={"owner": True, "client": True, "machine_type": True, "recommended_type": True,
                                                          "cpu_p95": ":.0f", "mem_p95": ":.0f", "bubble": False},
                                              labels={"cpu_p95": "CPU p95 of hourly peaks (%)", "mem_p95": "RAM p95 of hourly peaks (%)"})
-                            fig.add_vline(x=target_cpu, line_dash="dash", line_color="#9AA6BB")
-                            fig.add_hline(y=target_mem, line_dash="dash", line_color="#9AA6BB")
+                            fig.add_vline(x=target_cpu, line_dash="dash", line_color="#9A988F")
+                            fig.add_hline(y=target_mem, line_dash="dash", line_color="#9A988F")
                             fig.update_xaxes(range=[0, 105])
                             fig.update_yaxes(range=[0, 105])
                             show_chart(fig, 400, legend=True)
@@ -2852,9 +3087,9 @@ elif page == "CPU & RAM":
                             card_header(f"{title} Over Time", "Hourly average and peak")
                             if vm_util[mean_col].notna().any():
                                 fig = go.Figure()
-                                fig.add_trace(go.Scatter(x=vm_util["time"], y=vm_util[max_col], name="Hourly peak", line=dict(color="#EF4444", width=1)))
+                                fig.add_trace(go.Scatter(x=vm_util["time"], y=vm_util[max_col], name="Hourly peak", line=dict(color="#CC272E", width=1)))
                                 fig.add_trace(go.Scatter(x=vm_util["time"], y=vm_util[mean_col], name="Hourly average", line=dict(color=C_NOW, width=2)))
-                                fig.add_hline(y=target, line_dash="dash", line_color="#9AA6BB", annotation_text=f"target {target:.0f}%")
+                                fig.add_hline(y=target, line_dash="dash", line_color="#9A988F", annotation_text=f"target {target:.0f}%")
                                 if pd.notna(p95):
                                     fig.add_hline(y=p95, line_dash="dot", line_color=C_WARN, annotation_text=f"p95 {p95:.0f}%", annotation_position="bottom right")
                                 fig.update_layout(yaxis_range=[0, 105])
