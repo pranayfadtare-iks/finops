@@ -5,6 +5,7 @@ import base64
 from contextlib import contextmanager
 import html
 import json
+import math
 import os
 import pathlib
 import pandas as pd
@@ -1033,18 +1034,22 @@ def build_unlabelled_resources(raw, owner_map):
     return out.reset_index(drop=True)
 
 
-def open_unlabelled(kind):
-    """Button callback: open the unlabelled-cost pop-up for 'owner' or 'feature' on the next run."""
-    st.session_state["unl_open"] = kind
-
-
 def unlabelled_click(kind, chart_key, labels):
     """on_select callback for an Overview donut: clicking its '(not labeled)' slice opens the pop-up.
 
-    The chart key changes after every click, so the clicked slice never stays highlighted."""
+    The chart key changes after every click, so the clicked slice never stays highlighted. Clicks arrive from the
+    invisible point layer of clickable_donut_figure: curve 0 is the pie, curve i + 1 holds the points of slice i."""
     def _cb():
         state = st.session_state.get(chart_key)
-        value = bl.resolve_click(state["selection"]["points"] if state else [], [labels])
+        points = state["selection"]["points"] if state else []
+        value = None
+        for p in points or []:
+            curve = p.get("curve_number", p.get("curveNumber"))
+            if isinstance(curve, int) and 1 <= curve <= len(labels):
+                value = labels[curve - 1]
+                break
+        if value is None:
+            value = bl.resolve_click(points, [labels])
         st.session_state["unl_n"] = st.session_state.get("unl_n", 0) + 1
         if value == NOT_LABELED:
             st.session_state["unl_open"] = kind
@@ -1591,17 +1596,62 @@ def top_with_others(frame, label_col, value_col, top_n=6):
     return top
 
 
+def clickable_donut_figure(series, colors, total, hole=0.72):
+    """A donut whose slices Streamlit can click.
+
+    Streamlit's on_select never fires for pie slices (Plotly pies are not selectable) and polar bars get no click either.
+    So the visible ring is the normal pie, made mouse-transparent by CSS (see the 'unl_chart_' rules), and under each
+    slice sit invisible scatter points on square axes ([-1, 1] = pie radius). Hovering / clicking a slice hits those
+    points: one scatter trace per slice, so a click's curve_number - 1 is the slice position (see unlabelled_click)."""
+    names = [str(n) for n in series.index]
+    values = [max(float(v), 0.0) for v in series.values]
+    fig = go.Figure(go.Pie(
+        labels=names, values=values, hole=hole, sort=False, direction="clockwise",
+        marker=dict(colors=colors, line=dict(color="#FFFFFF", width=3 * DONUT_K)),
+        textinfo="none", hoverinfo="none",
+    ))
+    start = 0.0
+    for name, value, color in zip(names, values, colors):
+        share = value / total if total > 0 else 0.0
+        xs, ys = [], []
+        if share > 0:
+            steps = max(int(share * 180), 1)                                  # ~2 degrees apart
+            for r in (hole + 0.03, hole + (1 - hole) * 0.5, 0.97):
+                for k in range(steps + 1):
+                    frac = start + share * (0.5 if steps == 1 and k == 0 else (0.05 + 0.9 * k / steps))
+                    angle = math.pi / 2 - 2 * math.pi * frac                    # 12 o'clock, clockwise
+                    xs.append(r * math.cos(angle))
+                    ys.append(r * math.sin(angle))
+        extra = "<br><i>Click for details</i>" if name == NOT_LABELED else ""
+        fig.add_trace(go.Scatter(
+            x=xs, y=ys, mode="markers", showlegend=False, name=name,
+            marker=dict(size=14, color="rgba(0,0,0,0)"),
+            selected=dict(marker=dict(opacity=0)), unselected=dict(marker=dict(opacity=0)),
+            hoverlabel=dict(bordercolor=color),
+            hovertemplate=f"<b>{html.escape(name)}</b><br>{value:,.2f} · {share * 100:.1f}%{extra}<extra></extra>",
+        ))
+        start += share
+    axis = dict(range=[-1, 1], visible=False, fixedrange=True, showgrid=False, zeroline=False)
+    fig.update_layout(xaxis=dict(axis, scaleanchor="y", scaleratio=1, constrain="range"), yaxis=axis, hovermode="closest")
+    return fig
+
+
 def render_donut(series, center_value, center_label, height=250, chart_key=None, on_select=None):
     """Donut chart (left) with a percentage legend (right), as in modern SaaS dashboards. ``on_select`` makes the slices clickable."""
     total = float(series.sum())
     colors = [OTHERS_COLOR if name == "Others" else (UNLABELED_COLOR if name == NOT_LABELED else DONUT_PALETTE[i % len(DONUT_PALETTE)]) for i, name in enumerate(series.index)]
-    fig = go.Figure(go.Pie(
-        labels=list(series.index), values=list(series.values), hole=0.72, sort=False, direction="clockwise",
-        marker=dict(colors=colors, line=dict(color="#FFFFFF", width=3 * DONUT_K)),
-        textinfo="none", hovertemplate="<b>%{label}</b><br>%{value:,.2f} · %{percent}<extra></extra>",
-    ))
-    fig.add_annotation(text=f"<b>{center_value}</b>", x=0.5, y=0.54, showarrow=False, font=dict(size=round(19 * DONUT_K, 1), color=INK))
-    fig.add_annotation(text=center_label, x=0.5, y=0.43, showarrow=False, font=dict(size=round(12 * DONUT_K, 1), color=MUTED))
+    if on_select is None:
+        fig = go.Figure(go.Pie(
+            labels=list(series.index), values=list(series.values), hole=0.72, sort=False, direction="clockwise",
+            marker=dict(colors=colors, line=dict(color="#FFFFFF", width=3 * DONUT_K)),
+            textinfo="none", hovertemplate="<b>%{label}</b><br>%{value:,.2f} · %{percent}<extra></extra>",
+        ))
+    else:
+        fig = clickable_donut_figure(series, colors, total)
+    fig.add_annotation(text=f"<b>{center_value}</b>", x=0.5, y=0.54, xref="paper", yref="paper", showarrow=False,
+                       font=dict(size=round(19 * DONUT_K, 1), color=INK))
+    fig.add_annotation(text=center_label, x=0.5, y=0.43, xref="paper", yref="paper", showarrow=False,
+                       font=dict(size=round(12 * DONUT_K, 1), color=MUTED))
     style_chart(fig, round(height * DONUT_K))
     fig.update_layout(margin=dict(l=0, r=0, t=0, b=0))
     legend = "".join(
@@ -1838,7 +1888,7 @@ credit_share = abs(credits_total) / gross * 100 if gross else 0
 net_share = net / gross * 100 if gross else 0
 
 if page != LEADERSHIP_PAGE:
-    k1, k2, k3, k4, k5 = st.columns(5)
+    k1, k2, k3, k5 = st.columns(4)
     with k1:
         render_kpi_card("Net Cost After Credits", money(net, cur_label), f"{net_share:.1f}% of gross cost",
                         SVG_NET_COST, "#E8F0FE", sparkline(daily_all["net_cost"], "#2563EB", "net"))
@@ -1848,9 +1898,6 @@ if page != LEADERSHIP_PAGE:
     with k3:
         render_kpi_card("Credits / Adjustments", money(credits_total, cur_label), f"{credit_share:.1f}% of gross cost",
                         SVG_CREDITS, "#E3F8EC", sparkline(daily_all["credits"], "#22C55E", "credits"))
-    with k4:
-        render_kpi_card("Billing Rows", f"{row_count:,}", f"Avg {row_count / n_days:,.0f} rows / day",
-                        SVG_ROWS, "#E6F0FF", sparkline(daily_all["billing_rows"], "#3B82F6", "rows"))
     with k5:
         render_kpi_card("Services", f"{services_count:,}", f"across {projects_count:,} projects",
                         SVG_SERVICES, "#FEF1DC", sparkline(daily_all["services"], "#F59E0B", "svc", bars=True))
@@ -1916,7 +1963,7 @@ if page == "Overview":
             else:
                 ow_total = float(label_df.loc[label_df["net_cost"] > 0, "net_cost"].sum())
                 ow_unlabeled = float(label_df.loc[(label_df["owner_name"] == NOT_LABELED) & (label_df["net_cost"] > 0), "net_cost"].sum())
-                ow_desc = f"{ow_unlabeled / ow_total * 100:.0f}% of cost has no owner label" if ow_total > 0 and ow_unlabeled > 0 else ""
+                ow_desc = f"{ow_unlabeled / ow_total * 100:.0f}% of cost has no owner label · click the grey slice for details" if ow_total > 0 and ow_unlabeled > 0 else ""
                 card_header("Cost by Owner", ow_desc, badge="Top 6 + Others")
                 ow = top_with_others(label_df, "owner_name", "net_cost", 6)
                 if ow.empty:
@@ -1925,10 +1972,6 @@ if page == "Overview":
                     owner_key = f"unl_chart_owner_{st.session_state.get('unl_n', 0)}"
                     render_donut(ow, money(ow_total, cur_label), "Total Cost", height=290, chart_key=owner_key,
                                  on_select=unlabelled_click("owner", owner_key, list(ow.index)))
-                    if ow_unlabeled > 0:
-                        st.button("View unlabelled owner cost", key="unl_btn_owner", icon=":material/table_view:", use_container_width=True,
-                                  on_click=open_unlabelled, args=("owner",),
-                                  help="Click the grey (not labeled) slice or this button to see where that cost sits and download it as CSV.")
         with card("project"):
             card_header("Cost by Project", "Top projects ranked by net cost", badge="Top 12")
             render_ranked_list(df, "project", "net_cost", cur_label, 12, "linear-gradient(90deg,#3B82F6,#60A5FA)")
@@ -1950,7 +1993,7 @@ if page == "Overview":
             else:
                 fe_total = float(label_df.loc[label_df["net_cost"] > 0, "net_cost"].sum())
                 fe_unlabeled = float(label_df.loc[(label_df["feature_name"] == NOT_LABELED) & (label_df["net_cost"] > 0), "net_cost"].sum())
-                fe_desc = f"{fe_unlabeled / fe_total * 100:.0f}% of cost has no feature label" if fe_total > 0 and fe_unlabeled > 0 else ""
+                fe_desc = f"{fe_unlabeled / fe_total * 100:.0f}% of cost has no feature label · click the grey slice for details" if fe_total > 0 and fe_unlabeled > 0 else ""
                 card_header("Cost by Feature", fe_desc, badge="Top 6 + Others")
                 fe = top_with_others(label_df, "feature_name", "net_cost", 6)
                 if fe.empty:
@@ -1959,10 +2002,6 @@ if page == "Overview":
                     feature_key = f"unl_chart_feature_{st.session_state.get('unl_n', 0)}"
                     render_donut(fe, money(fe_total, cur_label), "Total Cost", height=290, chart_key=feature_key,
                                  on_select=unlabelled_click("feature", feature_key, list(fe.index)))
-                    if fe_unlabeled > 0:
-                        st.button("View unlabelled feature cost", key="unl_btn_feature", icon=":material/table_view:", use_container_width=True,
-                                  on_click=open_unlabelled, args=("feature",),
-                                  help="Click the grey (not labeled) slice or this button to see where that cost sits and download it as CSV.")
         with card("donut_credits"):
             card_header("Credits by Service", "Largest credit / adjustment amounts by service")
             credit_df = df.assign(credit_abs=df["credits"].abs())
